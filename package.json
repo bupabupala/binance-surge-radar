@@ -1,0 +1,25 @@
+{
+  "name": "binance-market-radar",
+  "version": "1.0.0",
+  "description": "Binance Multi-Market Monitor & Volume Surge Radar on Cloudflare Workers",
+  "main": "_worker.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "keywords": [
+    "binance",
+    "crypto",
+    "cloudflare-workers",
+    "radar",
+    "market-cap",
+    "volume-surge",
+    "ondo-rwa"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^3.100.0"
+  }
+}
