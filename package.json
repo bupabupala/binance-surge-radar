@@ -1,5 +1,5 @@
 {
-  "name": "binance-market-radar",
+  "name": "binance-surge-radar",
   "version": "1.0.0",
   "description": "Binance Multi-Market Monitor & Volume Surge Radar on Cloudflare Workers",
   "main": "_worker.js",
