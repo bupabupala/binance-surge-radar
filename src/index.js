@@ -30,6 +30,48 @@ export default {
     }
 
     try {
+      // 🚀 1. Cloudflare 边缘 WebSocket 反向中继 (/ws)
+      if (path === '/ws') {
+        const upgradeHeader = request.headers.get('Upgrade');
+        if (!upgradeHeader || upgradeHeader.toLowerCase() !== 'websocket') {
+          return new Response('Expected Upgrade: websocket', { status: 426 });
+        }
+
+        const webSocketPair = new WebSocketPair();
+        const [client, server] = Object.values(webSocketPair);
+        server.accept();
+
+        try {
+          // Cloudflare 海外边缘光纤直连币安官方 WebSocket 广播流
+          const binanceWs = new WebSocket('wss://stream.binance.com:9443/ws/!ticker@arr');
+
+          binanceWs.addEventListener('message', event => {
+            try {
+              server.send(event.data);
+            } catch (e) {}
+          });
+
+          binanceWs.addEventListener('close', () => {
+            try { server.close(); } catch (e) {}
+          });
+
+          binanceWs.addEventListener('error', () => {
+            try { server.close(); } catch (e) {}
+          });
+
+          server.addEventListener('close', () => {
+            try { binanceWs.close(); } catch (e) {}
+          });
+        } catch (err) {
+          try { server.close(1011, 'Binance upstream connection error'); } catch (e) {}
+        }
+
+        return new Response(null, {
+          status: 101,
+          webSocket: client
+        });
+      }
+
       // 首次初始化接口 (/api/setup)
       if (path === '/api/setup') {
         if (request.method === 'POST') {
@@ -42,7 +84,7 @@ export default {
       const loginPath = authCfg.loginPath || '/login';
       const adminPath = authCfg.adminPath || '/admin';
 
-      // 1. 动态私密登录入口
+      // 动态私密登录入口
       if (path === loginPath || path === '/login') {
         if (path === '/login' && loginPath !== '/login') {
           return renderNginxPage();
@@ -58,10 +100,10 @@ export default {
         return handleLogout(request, env);
       }
 
-      // 2. 身份鉴权校验
+      // 身份鉴权校验
       const authRole = await checkAuth(request, env);
 
-      // 3. 动态私密管理中枢
+      // 动态私密管理中枢
       if (path === adminPath || path === '/admin') {
         if (path === '/admin' && adminPath !== '/admin') {
           return renderNginxPage();
@@ -73,7 +115,7 @@ export default {
         return renderAdminPage();
       }
 
-      // 4. 管理员专属 API (/api/admin/*)
+      // 管理员专属 API (/api/admin/*)
       if (path.startsWith('/api/admin/')) {
         if (authRole !== 'admin') {
           return jsonResponse({ code: 401, message: '未授权或无管理员权限' }, 401);
@@ -135,7 +177,7 @@ export default {
         }
       }
 
-      // 5. 根路径 (/)：未登录返回 Nginx 伪装；已登录展示雷达大盘
+      // 根路径 (/)：未登录返回 Nginx 伪装；已登录展示雷达大盘
       if (path === '/' || path === '/index.html') {
         if (!authRole) {
           return renderNginxPage(); // 🛡️ Nginx 深度伪装
@@ -143,11 +185,11 @@ export default {
         return renderDashboardPage(authRole, adminPath);
       }
 
-      // 6. 行情公共数据 API
+      // 行情公共数据 API
       if (path === '/api/dashboard') {
         if (!authRole) return jsonResponse({ code: 401, message: '请先登录' }, 401);
         const data = await getOrFetchDashboard(env);
-        return jsonResponse(data, 200, { 'Cache-Control': 'public, max-age=15, s-maxage=30' });
+        return jsonResponse(data, 200, { 'Cache-Control': 'public, max-age=10, s-maxage=15' });
       }
 
       if (path === '/api/rank') {
@@ -214,7 +256,7 @@ export default {
         });
       }
 
-      // 未匹配路由默认返回 Nginx 伪装，不暴露 404 JSON
+      // 未匹配路由默认返回 Nginx 伪装，不暴露 404
       return renderNginxPage();
     } catch (err) {
       return jsonResponse({ code: 500, message: err.message }, 500);
