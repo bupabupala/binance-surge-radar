@@ -1,5 +1,5 @@
 /**
- * 币安实时行情聚合引擎 (原生 GET 直连 · 488+ Alpha 链上代币 · 1762+ 美股 · 670+ 活跃现货)
+ * 币安实时行情聚合引擎 (Alpha Web3 原生代币 · bStocks 实时动态美股 · 现货全量 · 官方详情公告)
  */
 
 import { KV_KEYS, BINANCE_UPSTREAM, COMMON_HEADERS } from '../config/constants.js';
@@ -73,6 +73,7 @@ export async function fetchSpotTickers() {
   return result;
 }
 
+// 🎯 1. 纯正 Web3 链上原生代币 (rankType = 20)
 export async function fetchAlphaTokens(env = null) {
   const kv = env ? getKVBinding(env) : null;
   if (kv) {
@@ -90,7 +91,7 @@ export async function fetchAlphaTokens(env = null) {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 4000);
-      const url = `https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/pulse/unified/rank/list/ai?chainIds=56,CT_501,8453,1&rankType=40&page=${page}&size=250`;
+      const url = `https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/pulse/unified/rank/list/ai?chainIds=56,CT_501,8453,1&rankType=20&page=${page}&size=250`;
       const res = await fetch(url, {
         headers: {
           'User-Agent': COMMON_HEADERS['User-Agent'],
@@ -125,8 +126,16 @@ export async function fetchAlphaTokens(env = null) {
     const sym = token.symbol || token.baseAsset || token.name || 'UNKNOWN';
     const ticker = (token.ticker || sym).toUpperCase();
     const tokenName = (token.name || '').toUpperCase();
+    const tag = token.tokenTag || {};
     
-    if (sym.toUpperCase().endsWith('B') || ticker.endsWith('B') || tokenName.includes('STOCK')) {
+    // 🛡️ 严格过滤所有美股代币，保证 Alpha 100% 纯正 Web3 链上代币
+    if (
+      token.stockCompanyName || 
+      token.ondoStatusInfo || 
+      tag['Tokenized Stocks Category'] || 
+      tag['Tokenized Stocks Launch Platform'] ||
+      sym.toUpperCase().endsWith('ON') && sym.length <= 8
+    ) {
       continue;
     }
 
@@ -169,6 +178,7 @@ export async function fetchAlphaTokens(env = null) {
   return list;
 }
 
+// 🎯 2. 美股与独角兽实时动态价格行情流 (rankType = 40)
 export async function fetchStockTokens(env = null) {
   const kv = env ? getKVBinding(env) : null;
   if (kv) {
@@ -181,59 +191,74 @@ export async function fetchStockTokens(env = null) {
     } catch (e) {}
   }
 
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-    const res = await fetch(BINANCE_UPSTREAM.STOCK_LIST, {
-      headers: {
-        'User-Agent': COMMON_HEADERS['User-Agent'],
-        'Accept': 'application/json'
-      },
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-    if (!res.ok) return [];
-    const json = await res.json();
-    const rawList = json?.data || [];
-    if (!Array.isArray(rawList)) return [];
-
-    const list = rawList.map(item => {
-      const rawSym = item.symbol || item.stockSymbol || item.ticker || 'UNKNOWN';
-      let baseSym = rawSym.replace(/(\/USDT|USDT)$/i, '').trim();
-      if (!baseSym.endsWith('b') && !baseSym.endsWith('B')) baseSym = baseSym + 'b';
-      const price = parseFloat(item.price) || parseFloat(item.lastPrice) || 0;
-      const priceChangePercent = parseFloat(item.priceChangePercent) || parseFloat(item.chg24h) || 0;
-      const volume24h = parseFloat(item.volume24h) || parseFloat(item.quoteVolume) || 0;
-
-      return {
-        symbol: baseSym,
-        rawSymbol: rawSym,
-        ticker: baseSym,
-        name: item.companyName || item.name || baseSym,
-        zhName: getChineseDisplayName(baseSym, item.companyName || item.name, baseSym),
-        price,
-        priceChangePercent,
-        volume24h,
-        volume15m: volume24h / 96,
-        volume1h: volume24h / 24,
-        volume4h: volume24h / 6,
-        marketCap: parseFloat(item.marketCap) || (volume24h > 0 ? volume24h * 20 : 50000000),
-        category: 'stocks',
-        chainName: 'bStocks',
-        icon: item.icon || item.logo || ''
-      };
-    });
-
-    if (kv && list.length > 0) {
-      try {
-        await kv.put(KV_KEYS.STOCKS_DATA, JSON.stringify(list), { expirationTtl: 3600 });
-      } catch (e) {}
+  const pages = [1, 2];
+  const pagePromises = pages.map(async page => {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const url = `https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/pulse/unified/rank/list/ai?chainIds=56,CT_501,8453,1&rankType=40&page=${page}&size=250`;
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': COMMON_HEADERS['User-Agent'],
+          'Accept': 'application/json'
+        },
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) return [];
+      const json = await res.json();
+      return json?.data?.tokens || [];
+    } catch (e) {
+      return [];
     }
+  });
 
-    return list;
-  } catch (e) {
-    return [];
+  const results = await Promise.all(pagePromises);
+  const allTokens = results.flat();
+  if (allTokens.length === 0) return [];
+
+  const seen = new Set();
+  const list = [];
+
+  for (const token of allTokens) {
+    const rawSym = token.symbol || token.ticker || 'UNKNOWN';
+    const ticker = token.ticker || rawSym;
+    const key = `${rawSym}_${token.chainId || 'stock'}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const price = parseFloat(token.price) || parseFloat(token.lastPrice) || 0;
+    const volume24h = parseFloat(token.volume24h) || parseFloat(token.volume) || 0;
+    const priceChangePercent = parseFloat(token.priceChange24h) || parseFloat(token.percentChange24h) || 0;
+    const marketCap = parseFloat(token.marketCap) || (price > 0 ? price * 10000000 : 50000000);
+    const zhName = token.stockCompanyNameZh || token.stockCompanyName || getChineseDisplayName(ticker, token.name, ticker);
+
+    list.push({
+      symbol: rawSym,
+      rawSymbol: rawSym,
+      ticker: ticker,
+      name: token.stockCompanyName || token.name || ticker,
+      zhName: zhName,
+      price,
+      priceChangePercent,
+      volume24h,
+      volume15m: volume24h / 96,
+      volume1h: volume24h / 24,
+      volume4h: volume24h / 6,
+      marketCap,
+      category: 'stocks',
+      chainName: 'bStocks',
+      icon: token.icon || token.logoUrl || ''
+    });
   }
+
+  if (kv && list.length > 0) {
+    try {
+      await kv.put(KV_KEYS.STOCKS_DATA, JSON.stringify(list), { expirationTtl: 3600 });
+    } catch (e) {}
+  }
+
+  return list;
 }
 
 export async function fetchAnnouncements() {
