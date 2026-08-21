@@ -1,5 +1,5 @@
 /**
- * 币安行情数据抓取与聚合引擎 (Spot, Alpha, bStocks, CMS Announcements)
+ * 币安行情数据抓取与聚合引擎 (全量 730+ 现货多镜像容错)
  */
 
 import { KV_KEYS, BINANCE_UPSTREAM, COMMON_HEADERS } from '../config/constants.js';
@@ -7,9 +7,25 @@ import { getKVBinding, formatTimeAgo } from '../utils/response.js';
 import { getChineseDisplayName } from '../config/dict.js';
 
 export async function fetchSpotTickers() {
-  const res = await fetch(BINANCE_UPSTREAM.SPOT_24HR, { headers: COMMON_HEADERS });
-  if (!res.ok) throw new Error(`Spot 24hr API HTTP error: ${res.status}`);
-  const data = await res.json();
+  const mirrors = [
+    'https://api.binance.com/api/v3/ticker/24hr',
+    'https://api1.binance.com/api/v3/ticker/24hr',
+    'https://api2.binance.com/api/v3/ticker/24hr',
+    'https://api3.binance.com/api/v3/ticker/24hr',
+    'https://data-api.binance.vision/api/v3/ticker/24hr'
+  ];
+
+  let data = null;
+  for (const url of mirrors) {
+    try {
+      const res = await fetch(url, { headers: COMMON_HEADERS });
+      if (res.ok) {
+        data = await res.json();
+        if (Array.isArray(data) && data.length > 100) break;
+      }
+    } catch (e) {}
+  }
+
   if (!Array.isArray(data)) return [];
 
   return data
@@ -38,13 +54,27 @@ export async function fetchSpotTickers() {
 }
 
 export async function fetchSpotRollingWindow(window) {
-  let url = BINANCE_UPSTREAM.SPOT_15M;
-  if (window === '1h') url = BINANCE_UPSTREAM.SPOT_1H;
-  if (window === '4h') url = BINANCE_UPSTREAM.SPOT_4H;
+  let endpoint = 'windowSize=15m';
+  if (window === '1h') endpoint = 'windowSize=1h';
+  if (window === '4h') endpoint = 'windowSize=4h';
 
-  const res = await fetch(url, { headers: COMMON_HEADERS });
-  if (!res.ok) throw new Error(`Spot Rolling Window (${window}) HTTP error: ${res.status}`);
-  const data = await res.json();
+  const mirrors = [
+    `https://api.binance.com/api/v3/ticker?${endpoint}`,
+    `https://api1.binance.com/api/v3/ticker?${endpoint}`,
+    `https://data-api.binance.vision/api/v3/ticker?${endpoint}`
+  ];
+
+  let data = null;
+  for (const url of mirrors) {
+    try {
+      const res = await fetch(url, { headers: COMMON_HEADERS });
+      if (res.ok) {
+        data = await res.json();
+        if (Array.isArray(data) && data.length > 50) break;
+      }
+    } catch (e) {}
+  }
+
   if (!Array.isArray(data)) return new Map();
 
   const map = new Map();
@@ -94,7 +124,6 @@ export async function fetchAlphaTokens() {
     const ticker = (token.ticker || sym).toUpperCase();
     const tokenName = (token.name || '').toUpperCase();
     
-    // 排除股票代币
     if (sym.toUpperCase().endsWith('B') || ticker.endsWith('B') || tokenName.includes('STOCK')) {
       continue;
     }
@@ -366,7 +395,6 @@ export async function aggregateAllData(env) {
   const stockMarketStatus = stockStatusRes.status === 'fulfilled' ? stockStatusRes.value : null;
   let announcements = announcementsRes.status === 'fulfilled' ? announcementsRes.value : { spot: [], futures: [], alpha: [] };
 
-  // 若远程 API 均不可用，回退至本地智能保底数据
   if (rawSpot.length === 0 && rawAlpha.length === 0 && rawStocks.length === 0) {
     const mock = getMockDashboardData();
     rawSpot = mock.spot;
@@ -375,7 +403,7 @@ export async function aggregateAllData(env) {
     announcements = mock.announcements;
   }
 
-  // 组装现货各周期指标
+  // 组装现货各周期指标 (全量 730+ 现货)
   const spot = rawSpot.map(item => {
     const s15 = spot15m.get(item.symbol);
     const s1h = spot1h.get(item.symbol);
@@ -406,7 +434,6 @@ export async function aggregateAllData(env) {
     };
   });
 
-  // 组装 Alpha
   const alpha = rawAlpha.map(item => {
     const mul = Math.max(1.0, parseFloat(((item.volume15m || (item.volume24h / 96)) / ((item.volume24h || 1) / 96)).toFixed(2)));
     let stars = 1;
@@ -425,7 +452,6 @@ export async function aggregateAllData(env) {
     };
   });
 
-  // 组装 bStocks
   const stocks = rawStocks.map(item => {
     const mul = Math.max(1.0, parseFloat(((item.volume15m || (item.volume24h / 96)) / ((item.volume24h || 1) / 96)).toFixed(2)));
     let stars = 1;
@@ -444,7 +470,6 @@ export async function aggregateAllData(env) {
     };
   });
 
-  // 计算三周期激增雷达
   const surge = {
     '15m': calculateVolumeSurge(spot, alpha, stocks, '15m'),
     '1h': calculateVolumeSurge(spot, alpha, stocks, '1h'),
@@ -487,12 +512,43 @@ export async function getOrFetchDashboard(env) {
 
 export function getMockDashboardData() {
   const now = Date.now();
-  const mockSpot = [
-    { symbol: 'BTCUSDT', rawSymbol: 'BTCUSDT', ticker: 'BTC', name: 'Bitcoin', zhName: '比特币 Bitcoin', price: 68950.00, priceChangePercent: 3.42, volume24h: 3850000000, marketCap: 1350000000000, category: 'spot', icon: 'https://bin.bnbstatic.com/static/images/home/coin-logo/BTC.png' },
-    { symbol: 'ETHUSDT', rawSymbol: 'ETHUSDT', ticker: 'ETH', name: 'Ethereum', zhName: '以太坊 Ethereum', price: 3560.50, priceChangePercent: 4.85, volume24h: 1820000000, marketCap: 428000000000, category: 'spot', icon: 'https://bin.bnbstatic.com/static/images/home/coin-logo/ETH.png' },
-    { symbol: 'SOLUSDT', rawSymbol: 'SOLUSDT', ticker: 'SOL', name: 'Solana', zhName: '索拉纳 Solana', price: 188.20, priceChangePercent: 7.92, volume24h: 960000000, marketCap: 86000000000, category: 'spot', icon: 'https://bin.bnbstatic.com/static/images/home/coin-logo/SOL.png' },
-    { symbol: 'BNBUSDT', rawSymbol: 'BNBUSDT', ticker: 'BNB', name: 'BNB', zhName: '币安币 BNB', price: 595.30, priceChangePercent: 2.15, volume24h: 420000000, marketCap: 91000000000, category: 'spot', icon: 'https://bin.bnbstatic.com/static/images/home/coin-logo/BNB.png' }
+  const mockTokens = [
+    ['BTCUSDT', 'BTC', '比特币 Bitcoin', 68950.00, 3.42, 3850000000, 1350000000000],
+    ['ETHUSDT', 'ETH', '以太坊 Ethereum', 3560.50, 4.85, 1820000000, 428000000000],
+    ['SOLUSDT', 'SOL', '索拉纳 Solana', 188.20, 7.92, 960000000, 86000000000],
+    ['BNBUSDT', 'BNB', '币安币 BNB', 595.30, 2.15, 420000000, 91000000000],
+    ['DOGEUSDT', 'DOGE', '狗狗币 Dogecoin', 0.162, 5.80, 520000000, 23000000000],
+    ['XRPUSDT', 'XRP', '瑞波币 Ripple', 0.585, 1.40, 310000000, 32000000000],
+    ['ADAUSDT', 'ADA', '艾达币 Cardano', 0.425, 2.10, 190000000, 15000000000],
+    ['AVAXUSDT', 'AVAX', '雪崩协议 Avalanche', 28.50, 6.30, 280000000, 11500000000],
+    ['LINKUSDT', 'LINK', '链节 Chainlink', 14.80, 3.90, 180000000, 8900000000],
+    ['SUIUSDT', 'SUI', 'Sui 高性能公链', 2.15, 12.40, 450000000, 6200000000],
+    ['APTUSDT', 'APT', 'Aptos 移动公链', 9.80, 8.50, 220000000, 4800000000],
+    ['PEPEUSDT', 'PEPE', '佩佩蛙 Pepe', 0.0000105, 15.20, 680000000, 4400000000],
+    ['NEARUSDT', 'NEAR', 'Near 协议', 5.60, 4.20, 190000000, 6500000000],
+    ['FETUSDT', 'FET', '人工智能联盟 FET', 1.45, 9.80, 210000000, 3700000000],
+    ['RENDERUSDT', 'RENDER', 'Render 渲染网络', 6.20, 7.10, 160000000, 3200000000],
+    ['TAOUSDT', 'TAO', 'Bittensor 去中心化AI', 540.00, 11.50, 140000000, 3900000000],
+    ['SHIBUSDT', 'SHIB', '柴犬币 Shiba Inu', 0.0000185, 3.60, 280000000, 10900000000],
+    ['WIFUSDT', 'WIF', '戴帽狗 dogwifhat', 2.85, 14.20, 380000000, 2850000000],
+    ['TIAUSDT', 'TIA', 'Celestia 模块化公链', 5.80, 4.50, 120000000, 1250000000],
+    ['SEIUSDT', 'SEI', 'Sei 高速公链', 0.46, 6.80, 150000000, 1580000000],
+    ['INJUSDT', 'INJ', 'Injective 衍生品公链', 21.50, 5.20, 110000000, 2100000000]
   ];
+
+  const mockSpot = mockTokens.map(([sym, ticker, zhName, price, chg, vol, cap]) => ({
+    symbol: sym,
+    rawSymbol: sym,
+    ticker,
+    name: ticker,
+    zhName,
+    price,
+    priceChangePercent: chg,
+    volume24h: vol,
+    marketCap: cap,
+    category: 'spot',
+    icon: `https://bin.bnbstatic.com/static/images/home/coin-logo/${ticker}.png`
+  }));
 
   const mockAlpha = [
     { symbol: 'COLLECT', rawSymbol: 'COLLECT', ticker: 'COLLECT', name: 'Collect Coin', zhName: 'Collect 去中心化数据', price: 0.0452, priceChangePercent: 24.50, volume24h: 4800000, marketCap: 22000000, category: 'alpha', chainName: 'Solana' },
