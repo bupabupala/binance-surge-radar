@@ -1,5 +1,5 @@
 /**
- * 币安实时行情聚合引擎 (全量 488+ Alpha 链上代币 · 1760+ 美股 · 484 活跃现货 · 官方详情公告)
+ * 币安实时行情聚合引擎 (原生 GET 直连 · 488+ Alpha 链上代币 · 1762+ 美股 · 670+ 活跃现货)
  */
 
 import { KV_KEYS, BINANCE_UPSTREAM, COMMON_HEADERS } from '../config/constants.js';
@@ -9,8 +9,7 @@ import { getChineseDisplayName } from '../config/dict.js';
 export async function fetchSpotTickers() {
   const mirrors = [
     'https://data-api.binance.vision/api/v3/ticker/24hr',
-    'https://api.binance.com/api/v3/ticker/24hr',
-    'https://api1.binance.com/api/v3/ticker/24hr'
+    'https://api.binance.com/api/v3/ticker/24hr'
   ];
 
   let rawData = null;
@@ -86,25 +85,17 @@ export async function fetchAlphaTokens(env = null) {
     } catch (e) {}
   }
 
-  const pages = [1, 2, 3, 4, 5, 6, 7, 8];
+  const pages = [1, 2];
   const pagePromises = pages.map(async page => {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 4000);
-      const res = await fetch(BINANCE_UPSTREAM.ALPHA_UNIFIED_RANK, {
-        method: 'POST',
+      const url = `https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/pulse/unified/rank/list/ai?chainIds=56,CT_501,8453,1&rankType=40&page=${page}&size=250`;
+      const res = await fetch(url, {
         headers: {
           'User-Agent': COMMON_HEADERS['User-Agent'],
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'clientType': 'web'
+          'Accept': 'application/json'
         },
-        body: JSON.stringify({
-          chainIds: ['56', 'CT_501', '8453', '1'],
-          rankType: 40,
-          page,
-          size: 50
-        }),
         signal: controller.signal
       });
       clearTimeout(timeoutId);
@@ -196,8 +187,7 @@ export async function fetchStockTokens(env = null) {
     const res = await fetch(BINANCE_UPSTREAM.STOCK_LIST, {
       headers: {
         'User-Agent': COMMON_HEADERS['User-Agent'],
-        'Accept': 'application/json',
-        'clientType': 'web'
+        'Accept': 'application/json'
       },
       signal: controller.signal
     });
