@@ -1,5 +1,5 @@
 /**
- * 币安实时行情聚合引擎 (币安官方专线无风控直连 · 734+ 现货交易对)
+ * 币安实时行情聚合引擎 (专线直连 · 734+ 现货 · Alpha 链上 · bStocks 美股 · <$100M 小市值异动雷达)
  */
 
 import { KV_KEYS, BINANCE_UPSTREAM, COMMON_HEADERS } from '../config/constants.js';
@@ -76,78 +76,59 @@ export async function fetchSpotTickers() {
 }
 
 export async function fetchAlphaTokens() {
-  const pages = [1, 2];
-  const pagePromises = pages.map(async page => {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-      const res = await fetch(BINANCE_UPSTREAM.ALPHA_UNIFIED_RANK, {
-        method: 'POST',
-        headers: { ...COMMON_HEADERS, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chainIds: ['56', 'CT_501', '8453', '1'],
-          rankType: 40,
-          page,
-          size: 50
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      if (!res.ok) return [];
-      const json = await res.json();
-      return json?.data?.tokens || [];
-    } catch (e) {
-      return [];
-    }
-  });
-
-  const results = await Promise.all(pagePromises);
-  const allTokens = results.flat();
-  if (allTokens.length === 0) return [];
-
-  const seen = new Set();
-  const list = [];
-
-  for (const token of allTokens) {
-    const sym = token.symbol || token.baseAsset || token.name || 'UNKNOWN';
-    const ticker = (token.ticker || sym).toUpperCase();
-    const tokenName = (token.name || '').toUpperCase();
-    
-    if (sym.toUpperCase().endsWith('B') || ticker.endsWith('B') || tokenName.includes('STOCK')) {
-      continue;
-    }
-
-    const key = `${sym}_${token.chainId || 'web3'}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    const price = parseFloat(token.price) || parseFloat(token.lastPrice) || 0;
-    const volume24h = parseFloat(token.volume24h) || parseFloat(token.volume) || 0;
-    const priceChangePercent = parseFloat(token.priceChange24h) || parseFloat(token.percentChange24h) || parseFloat(token.chg24h) || 0;
-    const marketCap = parseFloat(token.marketCap) || parseFloat(token.fdv) || (volume24h * 8);
-
-    list.push({
-      symbol: sym,
-      rawSymbol: token.symbol || sym,
-      ticker: token.ticker || sym,
-      name: token.name || sym,
-      zhName: getChineseDisplayName(sym, token.name, token.ticker),
-      chainId: token.chainId,
-      chainName: token.chainName,
-      contractAddress: token.contractAddress,
-      price,
-      priceChangePercent,
-      volume24h,
-      volume15m: volume24h / 96,
-      volume1h: volume24h / 24,
-      volume4h: volume24h / 6,
-      marketCap,
-      category: 'alpha',
-      icon: token.icon || token.logoUrl || ''
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(BINANCE_UPSTREAM.ALPHA_UNIFIED_RANK, {
+      method: 'POST',
+      headers: { ...COMMON_HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chainIds: ['56', 'CT_501', '8453', '1'],
+        rankType: 40,
+        page: 1,
+        size: 50
+      }),
+      signal: controller.signal
     });
-  }
+    clearTimeout(timeoutId);
+    if (!res.ok) return [];
+    const json = await res.json();
+    const allTokens = json?.data?.tokens || [];
+    if (allTokens.length === 0) return [];
 
-  return list;
+    const list = [];
+    for (const token of allTokens) {
+      const sym = token.symbol || token.baseAsset || token.name || 'UNKNOWN';
+      const ticker = (token.ticker || sym).toUpperCase();
+      const price = parseFloat(token.price) || parseFloat(token.lastPrice) || 0;
+      const volume24h = parseFloat(token.volume24h) || parseFloat(token.volume) || 0;
+      const priceChangePercent = parseFloat(token.priceChange24h) || parseFloat(token.percentChange24h) || parseFloat(token.chg24h) || 0;
+      const marketCap = parseFloat(token.marketCap) || parseFloat(token.fdv) || (volume24h * 8);
+
+      list.push({
+        symbol: sym,
+        rawSymbol: token.symbol || sym,
+        ticker: token.ticker || sym,
+        name: token.name || sym,
+        zhName: getChineseDisplayName(sym, token.name, token.ticker),
+        chainId: token.chainId,
+        chainName: token.chainName,
+        contractAddress: token.contractAddress,
+        price,
+        priceChangePercent,
+        volume24h,
+        volume15m: volume24h / 96,
+        volume1h: volume24h / 24,
+        volume4h: volume24h / 6,
+        marketCap,
+        category: 'alpha',
+        icon: token.icon || token.logoUrl || ''
+      });
+    }
+    return list;
+  } catch (e) {
+    return [];
+  }
 }
 
 export async function fetchStockTokens() {
@@ -155,15 +136,13 @@ export async function fetchStockTokens() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000);
     const res = await fetch(BINANCE_UPSTREAM.STOCK_LIST, {
-      method: 'POST',
-      headers: { ...COMMON_HEADERS, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ page: 1, size: 50, sortType: 'marketCap', sortOrder: 'desc' }),
+      headers: { ...COMMON_HEADERS, 'Accept-Encoding': 'identity' },
       signal: controller.signal
     });
     clearTimeout(timeoutId);
     if (!res.ok) return [];
     const json = await res.json();
-    const rawList = json?.data?.stockList || json?.data?.list || json?.data?.tokens || json?.data?.rows || [];
+    const rawList = json?.data || [];
     if (!Array.isArray(rawList)) return [];
 
     return rawList.map(item => {
@@ -186,7 +165,7 @@ export async function fetchStockTokens() {
         volume15m: volume24h / 96,
         volume1h: volume24h / 24,
         volume4h: volume24h / 6,
-        marketCap: parseFloat(item.marketCap) || (volume24h > 0 ? volume24h * 20 : 100000000),
+        marketCap: parseFloat(item.marketCap) || (volume24h > 0 ? volume24h * 20 : 50000000),
         category: 'stocks',
         icon: item.icon || item.logo || ''
       };
@@ -249,6 +228,7 @@ export async function fetchAnnouncements() {
   }
 }
 
+// 🎯 核心：仅对市值 < 1 亿美金 (<$100M) 的中小盘币种进行放量异动雷达扫描
 export function calculateVolumeSurge(spotList, alphaList, stocksList, window = '15m') {
   const combined = [
     ...(spotList || []).map(item => ({ ...item, category: 'spot' })),
@@ -256,7 +236,16 @@ export function calculateVolumeSurge(spotList, alphaList, stocksList, window = '
     ...(stocksList || []).map(item => ({ ...item, category: 'stocks' }))
   ];
 
-  const scored = combined.map(item => {
+  // 严格过滤：市值小于 1 亿美金 ($100,000,000) 且成交量 > 10,000
+  const filtered = combined.filter(item => {
+    const cap = Number(item.marketCap) || 0;
+    const vol = Number(item.volume24h) || 0;
+    const sym = (item.ticker || item.symbol || '').toUpperCase();
+    const isMega = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'DOGE', 'ADA'].includes(sym);
+    return cap < 100000000 && vol > 10000 && !isMega;
+  });
+
+  const scored = filtered.map(item => {
     let windowVol = item.volume15m || (item.volume24h / 96);
     let expectedVol = (item.volume24h || 1) / 96;
     let chg = item.priceChangePercent / 6;
@@ -276,34 +265,22 @@ export function calculateVolumeSurge(spotList, alphaList, stocksList, window = '
 
     let stars = 1;
     let starDisplay = '⭐';
-    let starTitle = '15分钟单次放量异动';
-    let starDuration = '15m';
 
-    if (surgeMultiplier >= 12.0) {
+    if (surgeMultiplier >= 10.0) {
       stars = 6;
       starDisplay = '⭐⭐⭐⭐⭐⭐';
-      starTitle = '连续 6 次 (90分钟+) 顶级主力爆量霸榜';
-      starDuration = '90m+';
-    } else if (surgeMultiplier >= 8.0) {
+    } else if (surgeMultiplier >= 7.0) {
       stars = 5;
       starDisplay = '⭐⭐⭐⭐⭐';
-      starTitle = '连续 5 次 (75分钟) 强势买盘放量突破';
-      starDuration = '75m';
-    } else if (surgeMultiplier >= 5.0) {
+    } else if (surgeMultiplier >= 4.5) {
       stars = 4;
       starDisplay = '⭐⭐⭐⭐';
-      starTitle = '连续 4 次 (60分钟) 持续资金涌入';
-      starDuration = '60m';
-    } else if (surgeMultiplier >= 3.0) {
+    } else if (surgeMultiplier >= 2.5) {
       stars = 3;
       starDisplay = '⭐⭐⭐';
-      starTitle = '连续 3 次 (45分钟) 买盘量能跟进';
-      starDuration = '45m';
-    } else if (surgeMultiplier >= 2.0) {
+    } else if (surgeMultiplier >= 1.5) {
       stars = 2;
       starDisplay = '⭐⭐';
-      starTitle = '连续 2 次 (30分钟) 放量异动';
-      starDuration = '30m';
     }
 
     return {
@@ -320,8 +297,6 @@ export function calculateVolumeSurge(spotList, alphaList, stocksList, window = '
       surgeMultiplier,
       stars,
       starDisplay,
-      starTitle,
-      starDuration,
       marketCap: item.marketCap || (item.volume24h * 10),
       icon: item.icon
     };
