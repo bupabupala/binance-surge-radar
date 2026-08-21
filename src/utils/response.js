@@ -24,7 +24,14 @@ export function htmlResponse(html, status = 200, extraHeaders = {}) {
 }
 
 export function getKVBinding(env) {
-  return env?.BIAN_KV || env?.KV || env?.MARKET_KV || null;
+  if (!env) return null;
+  return env.BIAN_KV || 
+         env.KV || 
+         env.MARKET_KV || 
+         env.binance_surge_radar_kv || 
+         env['binance-surge-radar-kv'] || 
+         env.RADAR_KV || 
+         null;
 }
 
 export function formatPrice(val) {

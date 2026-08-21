@@ -2,10 +2,10 @@
   "name": "binance-surge-radar",
   "version": "1.0.0",
   "description": "Binance Multi-Market Monitor & Volume Surge Radar on Cloudflare Workers",
-  "main": "_worker.js",
+  "main": "src/index.js",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "wrangler deploy --keep-vars",
     "tail": "wrangler tail"
   },
   "keywords": [
