@@ -124,8 +124,10 @@ export default {
           if (request.method === 'GET') {
             const botConfig = await getBotConfig(env);
             const watchlist = await getWatchlist(env);
+            const kv = getKVBinding(env);
             return jsonResponse({
               success: true,
+              kvBound: Boolean(kv),
               botConfig,
               watchlist,
               guestEnabled: authCfg.guestEnabled,
@@ -139,7 +141,7 @@ export default {
             if (body.botConfig) {
               await saveBotConfig(env, body.botConfig);
             }
-            return jsonResponse({ success: true, message: '机器人及预警配置已保存' });
+            return jsonResponse({ success: true, message: '机器人及预警配置已永久保存到 KV' });
           }
         }
 

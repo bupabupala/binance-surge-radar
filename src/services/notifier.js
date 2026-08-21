@@ -319,10 +319,14 @@ export async function saveBotConfig(env, newConfig) {
   // 1. 同步保存到运行时内存
   gInMemoryBotConfig = merged;
 
-  // 2. 若 KV 存在则持久化写入
+  // 2. 若 KV 存在则持久化写入所有主备 Key
   if (kv) {
     try {
-      await kv.put(KV_KEYS.BOT_CONFIG, JSON.stringify(merged));
+      const serialized = JSON.stringify(merged);
+      await kv.put(KV_KEYS.BOT_CONFIG, serialized);
+      await kv.put('bian:admin:bot_config', serialized);
+      await kv.put('bian:bot_config', serialized);
+      await kv.put('bot_config', serialized);
     } catch (e) {}
   }
   return true;

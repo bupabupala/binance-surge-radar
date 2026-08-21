@@ -24,14 +24,26 @@ export function htmlResponse(html, status = 200, extraHeaders = {}) {
 }
 
 export function getKVBinding(env) {
-  if (!env) return null;
-  return env.BIAN_KV || 
-         env.KV || 
-         env.MARKET_KV || 
-         env.binance_surge_radar_kv || 
-         env['binance-surge-radar-kv'] || 
-         env.RADAR_KV || 
-         null;
+  if (!env || typeof env !== 'object') return null;
+  // 1. 优先常规与主流命名
+  const priorityKeys = [
+    'BIAN_KV', 'KV', 'MARKET_KV', 'RADAR_KV', 'SURGE_KV', 'BINANCE_KV',
+    'binance_surge_radar_kv', 'binance-surge-radar-kv', 'KV_BINDING', 'DATA_KV',
+    'STORAGE_KV', 'CONFIG_KV'
+  ];
+  for (const k of priorityKeys) {
+    if (env[k] && typeof env[k].get === 'function' && typeof env[k].put === 'function') {
+      return env[k];
+    }
+  }
+  // 2. 动态全景扫描 env 上的任意 KV 实例（绝不遗漏任何自定义命名的 KV）
+  for (const key of Object.keys(env)) {
+    const val = env[key];
+    if (val && typeof val === 'object' && typeof val.get === 'function' && typeof val.put === 'function') {
+      return val;
+    }
+  }
+  return null;
 }
 
 export function formatPrice(val) {
