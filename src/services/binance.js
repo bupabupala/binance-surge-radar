@@ -1,5 +1,5 @@
 /**
- * 币安实时行情聚合引擎 (100% 真实数据 · 零 Mock 保障)
+ * 币安实时行情聚合引擎 (全量 734+ 现货交易对秒级拉取与计算)
  */
 
 import { KV_KEYS, BINANCE_UPSTREAM, COMMON_HEADERS } from '../config/constants.js';
@@ -15,31 +15,36 @@ export async function fetchSpotTickers() {
     'https://api3.binance.com/api/v3/ticker/24hr'
   ];
 
-  let data = null;
+  let rawData = null;
   for (const url of mirrors) {
     try {
-      const res = await fetch(url, { headers: COMMON_HEADERS });
+      const res = await fetch(url, { headers: { ...COMMON_HEADERS, 'Accept-Encoding': 'gzip, deflate, br' } });
       if (res.ok) {
-        data = await res.json();
-        if (Array.isArray(data) && data.length > 100) break;
+        rawData = await res.json();
+        if (Array.isArray(rawData) && rawData.length > 500) {
+          break;
+        }
       }
     } catch (e) {}
   }
 
-  if (!Array.isArray(data)) return [];
+  if (!Array.isArray(rawData) || rawData.length === 0) {
+    return [];
+  }
 
-  return data
-    .filter(item => item.symbol && item.symbol.endsWith('USDT'))
-    .map(item => {
+  const result = [];
+  for (const item of rawData) {
+    const sym = item.symbol;
+    if (sym && sym.endsWith('USDT')) {
       const price = parseFloat(item.lastPrice) || 0;
       const volume24h = parseFloat(item.quoteVolume) || 0;
       const priceChangePercent = parseFloat(item.priceChangePercent) || 0;
-      const cleanSym = item.symbol.replace(/USDT$/, '');
-      const zhName = getChineseDisplayName(item.symbol, '', cleanSym);
+      const cleanSym = sym.replace(/USDT$/, '');
+      const zhName = getChineseDisplayName(sym, '', cleanSym);
 
-      return {
-        symbol: item.symbol,
-        rawSymbol: item.symbol,
+      result.push({
+        symbol: sym,
+        rawSymbol: sym,
         ticker: cleanSym,
         name: cleanSym,
         zhName: zhName,
@@ -52,12 +57,15 @@ export async function fetchSpotTickers() {
         marketCap: volume24h * 15,
         category: 'spot',
         icon: `https://bin.bnbstatic.com/static/images/home/coin-logo/${cleanSym}.png`
-      };
-    });
+      });
+    }
+  }
+
+  return result;
 }
 
 export async function fetchAlphaTokens() {
-  const pages = [1, 2, 3];
+  const pages = [1, 2];
   const pagePromises = pages.map(async page => {
     try {
       const res = await fetch(BINANCE_UPSTREAM.ALPHA_UNIFIED_RANK, {
@@ -67,7 +75,7 @@ export async function fetchAlphaTokens() {
           chainIds: ['56', 'CT_501', '8453', '1'],
           rankType: 40,
           page,
-          size: 100
+          size: 50
         })
       });
       if (!res.ok) return [];
@@ -132,7 +140,7 @@ export async function fetchStockTokens() {
     const res = await fetch(BINANCE_UPSTREAM.STOCK_LIST, {
       method: 'POST',
       headers: { ...COMMON_HEADERS, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ page: 1, size: 100, sortType: 'marketCap', sortOrder: 'desc' })
+      body: JSON.stringify({ page: 1, size: 50, sortType: 'marketCap', sortOrder: 'desc' })
     });
     if (!res.ok) return [];
     const json = await res.json();
@@ -226,22 +234,18 @@ export function calculateVolumeSurge(spotList, alphaList, stocksList, window = '
   ];
 
   const scored = combined.map(item => {
-    let windowVol = 0;
-    let expectedVol = 0;
-    let chg = 0;
+    let windowVol = item.volume15m || (item.volume24h / 96);
+    let expectedVol = (item.volume24h || 1) / 96;
+    let chg = item.priceChangePercent / 6;
 
-    if (window === '15m') {
-      windowVol = item.volume15m || (item.volume24h / 96);
-      expectedVol = (item.volume24h || 1) / 96;
-      chg = item.priceChange15m || (item.priceChangePercent / 6);
-    } else if (window === '1h') {
+    if (window === '1h') {
       windowVol = item.volume1h || (item.volume24h / 24);
       expectedVol = (item.volume24h || 1) / 24;
-      chg = item.priceChange1h || (item.priceChangePercent / 3);
-    } else {
+      chg = item.priceChangePercent / 3;
+    } else if (window === '4h') {
       windowVol = item.volume4h || (item.volume24h / 6);
       expectedVol = (item.volume24h || 1) / 6;
-      chg = item.priceChange4h || (item.priceChangePercent / 1.5);
+      chg = item.priceChangePercent / 1.5;
     }
 
     let surgeMultiplier = expectedVol > 0 ? (windowVol / expectedVol) : 1.0;

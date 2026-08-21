@@ -37,12 +37,22 @@ export default {
           return new Response('Expected Upgrade: websocket', { status: 426 });
         }
 
-        const webSocketPair = new WebSocketPair();
-        const [client, server] = Object.values(webSocketPair);
-        server.accept();
-
         try {
-          const binanceWs = new WebSocket('wss://stream.binance.com:9443/ws/!ticker@arr');
+          const upstreamResp = await fetch('https://stream.binance.com:9443/ws/!ticker@arr', {
+            headers: {
+              Upgrade: 'websocket'
+            }
+          });
+
+          const binanceWs = upstreamResp.webSocket;
+          if (!binanceWs) {
+            return new Response('Failed to connect to Binance WebSocket upstream', { status: 502 });
+          }
+          binanceWs.accept();
+
+          const webSocketPair = new WebSocketPair();
+          const [client, server] = Object.values(webSocketPair);
+          server.accept();
 
           binanceWs.addEventListener('message', event => {
             try {
@@ -61,14 +71,14 @@ export default {
           server.addEventListener('close', () => {
             try { binanceWs.close(); } catch (e) {}
           });
-        } catch (err) {
-          try { server.close(1011, 'Binance upstream connection error'); } catch (e) {}
-        }
 
-        return new Response(null, {
-          status: 101,
-          webSocket: client
-        });
+          return new Response(null, {
+            status: 101,
+            webSocket: client
+          });
+        } catch (err) {
+          return new Response(`WebSocket Error: ${err.message}`, { status: 500 });
+        }
       }
 
       const authCfg = await getAuthConfig(env);
