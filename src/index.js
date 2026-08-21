@@ -38,7 +38,7 @@ export default {
         }
 
         try {
-          const upstreamResp = await fetch('https://stream.binance.com:9443/ws/!ticker@arr', {
+          const upstreamResp = await fetch('https://data-stream.binance.vision/ws/!ticker@arr', {
             headers: {
               Upgrade: 'websocket'
             }
@@ -188,7 +188,7 @@ export default {
       if (path === '/api/dashboard') {
         if (!authRole) return jsonResponse({ code: 401, message: '请先登录' }, 401);
         const data = await getOrFetchDashboard(env);
-        return jsonResponse(data, 200, { 'Cache-Control': 'public, max-age=10, s-maxage=15' });
+        return jsonResponse(data, 200, { 'Cache-Control': 'public, max-age=5, s-maxage=10' });
       }
 
       if (path === '/api/rank') {

@@ -1,5 +1,5 @@
 /**
- * 币安实时行情聚合引擎 (全量 734+ 现货交易对秒级拉取与计算)
+ * 币安实时行情聚合引擎 (币安官方专线无风控直连 · 734+ 现货交易对)
  */
 
 import { KV_KEYS, BINANCE_UPSTREAM, COMMON_HEADERS } from '../config/constants.js';
@@ -8,8 +8,8 @@ import { getChineseDisplayName } from '../config/dict.js';
 
 export async function fetchSpotTickers() {
   const mirrors = [
-    'https://api.binance.com/api/v3/ticker/24hr',
     'https://data-api.binance.vision/api/v3/ticker/24hr',
+    'https://api.binance.com/api/v3/ticker/24hr',
     'https://api1.binance.com/api/v3/ticker/24hr',
     'https://api2.binance.com/api/v3/ticker/24hr',
     'https://api3.binance.com/api/v3/ticker/24hr'
@@ -18,7 +18,18 @@ export async function fetchSpotTickers() {
   let rawData = null;
   for (const url of mirrors) {
     try {
-      const res = await fetch(url, { headers: { ...COMMON_HEADERS, 'Accept-Encoding': 'gzip, deflate, br' } });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+          'Accept': 'application/json'
+        },
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
       if (res.ok) {
         rawData = await res.json();
         if (Array.isArray(rawData) && rawData.length > 500) {
@@ -68,6 +79,8 @@ export async function fetchAlphaTokens() {
   const pages = [1, 2];
   const pagePromises = pages.map(async page => {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
       const res = await fetch(BINANCE_UPSTREAM.ALPHA_UNIFIED_RANK, {
         method: 'POST',
         headers: { ...COMMON_HEADERS, 'Content-Type': 'application/json' },
@@ -76,8 +89,10 @@ export async function fetchAlphaTokens() {
           rankType: 40,
           page,
           size: 50
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       if (!res.ok) return [];
       const json = await res.json();
       return json?.data?.tokens || [];
@@ -137,11 +152,15 @@ export async function fetchAlphaTokens() {
 
 export async function fetchStockTokens() {
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
     const res = await fetch(BINANCE_UPSTREAM.STOCK_LIST, {
       method: 'POST',
       headers: { ...COMMON_HEADERS, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ page: 1, size: 50, sortType: 'marketCap', sortOrder: 'desc' })
+      body: JSON.stringify({ page: 1, size: 50, sortType: 'marketCap', sortOrder: 'desc' }),
+      signal: controller.signal
     });
+    clearTimeout(timeoutId);
     if (!res.ok) return [];
     const json = await res.json();
     const rawList = json?.data?.stockList || json?.data?.list || json?.data?.tokens || json?.data?.rows || [];
@@ -179,11 +198,15 @@ export async function fetchStockTokens() {
 
 export async function fetchAnnouncements() {
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
     const res = await fetch(BINANCE_UPSTREAM.ANNOUNCEMENT_CMS, {
       method: 'POST',
       headers: { ...COMMON_HEADERS, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pageNo: 1, pageSize: 20 })
+      body: JSON.stringify({ pageNo: 1, pageSize: 20 }),
+      signal: controller.signal
     });
+    clearTimeout(timeoutId);
     if (!res.ok) return { spot: [], futures: [], alpha: [] };
     const json = await res.json();
     const articles = json?.data?.articles || [];
@@ -354,7 +377,7 @@ export async function getOrFetchDashboard(env) {
       const raw = await kv.get(KV_KEYS.DASHBOARD_DATA);
       if (raw && raw.trim().length > 0) {
         const cached = JSON.parse(raw);
-        if (cached && cached.timestamp && (Date.now() - cached.timestamp < 60000) && cached.spot?.length > 100) {
+        if (cached && cached.timestamp && (Date.now() - cached.timestamp < 30000) && cached.spot?.length > 100) {
           return cached;
         }
       }
