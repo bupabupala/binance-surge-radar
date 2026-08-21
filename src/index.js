@@ -6,7 +6,7 @@
 import { KV_KEYS } from './config/constants.js';
 import { jsonResponse, getKVBinding } from './utils/response.js';
 import { checkAuth, handleLoginAction, handleLogout, getAuthConfig, savePasswordConfig } from './services/auth.js';
-import { getOrFetchDashboard, aggregateAllData } from './services/binance.js';
+import { getOrFetchDashboard, aggregateAllData, fetchAlphaTokens, fetchStockTokens, fetchAnnouncements } from './services/binance.js';
 import { getWatchlist, saveWatchlist } from './services/quant.js';
 import { getBotConfig, saveBotConfig, sendTestNotification, processScheduledAlerts } from './services/notifier.js';
 import { renderLoginPage } from './views/login.html.js';
@@ -191,38 +191,22 @@ export default {
         return jsonResponse(data, 200, { 'Cache-Control': 'public, max-age=5, s-maxage=10' });
       }
 
-      if (path === '/api/rank') {
+      if (path === '/api/alpha') {
         if (!authRole) return jsonResponse({ code: 401, message: '请先登录' }, 401);
-        const type = url.searchParams.get('type') || 'all';
-        const sort = url.searchParams.get('sort') || 'desc';
-        const sortBy = url.searchParams.get('sortBy') || 'marketCap';
-        const dashboard = await getOrFetchDashboard(env);
-        let list = [];
-        if (type === 'spot' || type === 'all') list.push(...(dashboard.spot || []));
-        if (type === 'alpha' || type === 'all') list.push(...(dashboard.alpha || []));
-        if (type === 'stocks' || type === 'all') list.push(...(dashboard.stocks || []));
-
-        list.sort((a, b) => {
-          let valA = Number(a[sortBy]) || 0;
-          let valB = Number(b[sortBy]) || 0;
-          return sort === 'asc' ? valA - valB : valB - valA;
-        });
-
-        return jsonResponse({ success: true, total: list.length, data: list });
+        const list = await fetchAlphaTokens();
+        return jsonResponse({ success: true, total: list.length, data: list }, 200, { 'Cache-Control': 'public, max-age=15, s-maxage=30' });
       }
 
-      if (path === '/api/surge') {
+      if (path === '/api/stocks') {
         if (!authRole) return jsonResponse({ code: 401, message: '请先登录' }, 401);
-        const window = url.searchParams.get('window') || '15m';
-        const dashboard = await getOrFetchDashboard(env);
-        const list = (dashboard.surge && dashboard.surge[window]) || [];
-        return jsonResponse({ success: true, window, total: list.length, data: list });
+        const list = await fetchStockTokens();
+        return jsonResponse({ success: true, total: list.length, data: list }, 200, { 'Cache-Control': 'public, max-age=60, s-maxage=120' });
       }
 
       if (path === '/api/announcements') {
         if (!authRole) return jsonResponse({ code: 401, message: '请先登录' }, 401);
-        const dashboard = await getOrFetchDashboard(env);
-        return jsonResponse({ success: true, data: dashboard.announcements || { spot: [], futures: [], alpha: [] } });
+        const data = await fetchAnnouncements();
+        return jsonResponse({ success: true, data }, 200, { 'Cache-Control': 'public, max-age=60, s-maxage=120' });
       }
 
       if (path === '/api/sync') {

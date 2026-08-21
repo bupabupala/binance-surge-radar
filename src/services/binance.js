@@ -1,5 +1,5 @@
 /**
- * 币安实时行情聚合引擎 (专线直连 · 484 活跃现货 · 488+ Alpha 全量 · 1760+ 美股 · 官方详情公告)
+ * 币安实时行情聚合引擎 (全量 488+ Alpha 链上代币 · 1760+ 美股 · 484 活跃现货 · 官方详情公告)
  */
 
 import { KV_KEYS, BINANCE_UPSTREAM, COMMON_HEADERS } from '../config/constants.js';
@@ -79,7 +79,7 @@ export async function fetchAlphaTokens() {
   const pagePromises = pages.map(async page => {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
       const res = await fetch(BINANCE_UPSTREAM.ALPHA_UNIFIED_RANK, {
         method: 'POST',
         headers: { ...COMMON_HEADERS, 'Content-Type': 'application/json' },
@@ -161,7 +161,7 @@ export async function fetchAlphaTokens() {
 export async function fetchStockTokens() {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
     const res = await fetch(BINANCE_UPSTREAM.STOCK_LIST, {
       headers: { ...COMMON_HEADERS, 'Accept-Encoding': 'identity' },
       signal: controller.signal
@@ -243,21 +243,19 @@ export async function fetchAnnouncements() {
     }
   } catch (e) {}
 
-  // 兜底官方专区直达链接
   return {
     spot: [
-      { type: '新币上新', title: '数字货币及交易对上新公告专区 (实时直达)', url: 'https://www.binance.com/zh-CN/support/announcement/list/93', timeAgo: '官方专区' }
+      { type: '新币上新', title: '数字货币及交易对上新公告专区 (点击直达明细)', url: 'https://www.binance.com/zh-CN/support/announcement/list/93', timeAgo: '官方专区' }
     ],
     futures: [
       { type: '合约上线', title: '币安合约上线与最新活动公告专区', url: 'https://www.binance.com/zh-CN/support/announcement/list/48', timeAgo: '官方专区' }
     ],
     alpha: [
-      { type: '下架代币', title: '下架代币及交易对公告专区 (实时直达)', url: 'https://www.binance.com/zh-CN/support/announcement/list/161', timeAgo: '官方专区' }
+      { type: '下架代币', title: '下架代币及交易对公告专区 (点击直达明细)', url: 'https://www.binance.com/zh-CN/support/announcement/list/161', timeAgo: '官方专区' }
     ]
   };
 }
 
-// 🎯 核心：仅对市值 < 1 亿美金 (<$100M) 的中小盘币种进行放量异动雷达扫描
 export function calculateVolumeSurge(spotList, alphaList, stocksList, window = '15m') {
   const combined = [
     ...(spotList || []).map(item => ({ ...item, category: 'spot' })),
