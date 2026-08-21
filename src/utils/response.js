@@ -23,9 +23,96 @@ export function htmlResponse(html, status = 200, extraHeaders = {}) {
   });
 }
 
+/**
+ * 基于 Cloudflare 官方 REST API 的 KV 适配器
+ * 支持在未声明 wrangler.toml [[kv_namespaces]] 时通过 CF_API_TOKEN + BIAN_KV_ID 直接读写
+ */
+export class RestKVAdapter {
+  constructor(apiToken, namespaceId, accountId = null) {
+    this.apiToken = (apiToken || '').trim();
+    this.namespaceId = (namespaceId || '').trim();
+    this.accountId = (accountId || '').trim();
+    this._cachedAccountId = this.accountId || null;
+  }
+
+  async getAccountId() {
+    if (this._cachedAccountId) return this._cachedAccountId;
+    try {
+      const res = await fetch('https://api.cloudflare.com/client/v4/accounts', {
+        headers: { 'Authorization': `Bearer ${this.apiToken}` }
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.success && data.result && data.result.length > 0) {
+        this._cachedAccountId = data.result[0].id;
+        return this._cachedAccountId;
+      }
+    } catch (e) {
+      console.error('自动发现 Cloudflare 账户 ID 失败:', e);
+    }
+    return null;
+  }
+
+  async get(key) {
+    try {
+      const accId = await this.getAccountId();
+      if (!accId) return null;
+      const url = `https://api.cloudflare.com/client/v4/accounts/${accId}/storage/kv/namespaces/${this.namespaceId}/values/${encodeURIComponent(key)}`;
+      const res = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${this.apiToken}` }
+      });
+      if (res.status === 404) return null;
+      if (!res.ok) return null;
+      return await res.text();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async put(key, value, options = {}) {
+    try {
+      const accId = await this.getAccountId();
+      if (!accId) return false;
+      let url = `https://api.cloudflare.com/client/v4/accounts/${accId}/storage/kv/namespaces/${this.namespaceId}/values/${encodeURIComponent(key)}`;
+      if (options && options.expirationTtl) {
+        url += `?expiration_ttl=${options.expirationTtl}`;
+      }
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${this.apiToken}`,
+          'Content-Type': 'text/plain'
+        },
+        body: typeof value === 'string' ? value : JSON.stringify(value)
+      });
+      const data = await res.json().catch(() => ({}));
+      return res.ok && data.success !== false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async delete(key) {
+    try {
+      const accId = await this.getAccountId();
+      if (!accId) return false;
+      const url = `https://api.cloudflare.com/client/v4/accounts/${accId}/storage/kv/namespaces/${this.namespaceId}/values/${encodeURIComponent(key)}`;
+      const res = await fetch(url, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${this.apiToken}` }
+      });
+      return res.ok;
+    } catch (e) {
+      return false;
+    }
+  }
+}
+
+let gCachedKV = null;
+
 export function getKVBinding(env) {
   if (!env || typeof env !== 'object') return null;
-  // 1. 优先常规与主流命名
+
+  // 1. 优先常规与原生 KV 命名空间绑定
   const priorityKeys = [
     'BIAN_KV', 'KV', 'MARKET_KV', 'RADAR_KV', 'SURGE_KV', 'BINANCE_KV',
     'binance_surge_radar_kv', 'binance-surge-radar-kv', 'KV_BINDING', 'DATA_KV',
@@ -36,13 +123,25 @@ export function getKVBinding(env) {
       return env[k];
     }
   }
-  // 2. 动态全景扫描 env 上的任意 KV 实例（绝不遗漏任何自定义命名的 KV）
   for (const key of Object.keys(env)) {
     const val = env[key];
     if (val && typeof val === 'object' && typeof val.get === 'function' && typeof val.put === 'function') {
       return val;
     }
   }
+
+  // 2. 自动降级为基于 Cloudflare REST API 的 KV 适配器 (根据 CF_API_TOKEN + BIAN_KV_ID 自动路由)
+  const apiToken = env.CF_API_TOKEN || env.CLOUDFLARE_API_TOKEN || env.API_TOKEN || '';
+  const kvId = env.BIAN_KV_ID || env.KV_ID || env.KV_NAMESPACE_ID || '';
+  const accountId = env.CF_ACCOUNT_ID || env.CLOUDFLARE_ACCOUNT_ID || env.ACCOUNT_ID || '';
+
+  if (apiToken && kvId) {
+    if (!gCachedKV || gCachedKV.apiToken !== apiToken || gCachedKV.namespaceId !== kvId) {
+      gCachedKV = new RestKVAdapter(apiToken, kvId, accountId);
+    }
+    return gCachedKV;
+  }
+
   return null;
 }
 
