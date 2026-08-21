@@ -155,13 +155,15 @@ import { KV_KEYS } from '../config/constants.js';
 import { getKVBinding } from '../utils/response.js';
 import { getWatchlist } from './quant.js';
 
+let gInMemoryBotConfig = null;
+
 export async function getBotConfig(env) {
   const kv = getKVBinding(env);
 
-  const defaultTgToken = env?.TELEGRAM_BOT_TOKEN || '';
-  const defaultTgChatId = env?.TELEGRAM_CHAT_ID || '';
-  const defaultDingToken = env?.DINGTALK_TOKEN || '';
-  const defaultDingSecret = env?.DINGTALK_SECRET || '';
+  const defaultTgToken = env?.TELEGRAM_BOT_TOKEN || env?.TG_BOT_TOKEN || env?.TELEGRAM_TOKEN || env?.TG_TOKEN || env?.BOT_TOKEN || '';
+  const defaultTgChatId = env?.TELEGRAM_CHAT_ID || env?.TG_CHAT_ID || env?.CHAT_ID || env?.TELEGRAM_CHATID || '';
+  const defaultDingToken = env?.DINGTALK_TOKEN || env?.DINGTALK_WEBHOOK || env?.DING_WEBHOOK || env?.DING_TOKEN || env?.DINGTALK_URL || '';
+  const defaultDingSecret = env?.DINGTALK_SECRET || env?.DING_SECRET || '';
 
   let config = {
     telegram: {
@@ -194,43 +196,62 @@ export async function getBotConfig(env) {
     }
   };
 
+  // 1. 先尝试从内存全局缓存读取
+  if (gInMemoryBotConfig) {
+    config = { ...config, ...gInMemoryBotConfig };
+  }
+
+  // 2. 尝试从 KV 各种可能的键名读取
   if (kv) {
-    try {
-      const raw = await kv.get(KV_KEYS.BOT_CONFIG);
-      if (raw) {
-        const parsed = JSON.parse(raw);
+    const keysToTry = [
+      KV_KEYS.BOT_CONFIG,
+      'bian:admin:bot_config',
+      'bian:bot_config',
+      'bot_config',
+      'bian_bot_config'
+    ];
+    for (const k of keysToTry) {
+      try {
+        const raw = await kv.get(k);
+        if (raw) {
+          const parsed = JSON.parse(raw);
 
-        // 兼容 tg 格式 (来自 admin.html.js) 与 telegram 格式
-        const tgObj = parsed.tg || parsed.telegram || {};
-        const tgToken = tgObj.botToken || tgObj.token || defaultTgToken;
-        const tgChatId = tgObj.chatId || defaultTgChatId;
-        const tgEnabled = tgObj.enabled !== undefined ? tgObj.enabled : Boolean(tgToken && tgChatId);
+          // 兼容 tg 格式 (来自 admin.html.js) 与 telegram 格式
+          const tgObj = parsed.tg || parsed.telegram || {};
+          const tgToken = tgObj.botToken || tgObj.token || defaultTgToken;
+          const tgChatId = tgObj.chatId || defaultTgChatId;
+          const tgEnabled = tgObj.enabled !== undefined ? tgObj.enabled : Boolean(tgToken && tgChatId);
 
-        config.telegram = {
-          enabled: tgEnabled,
-          token: tgToken,
-          chatId: tgChatId
-        };
+          config.telegram = {
+            enabled: tgEnabled,
+            token: tgToken,
+            chatId: tgChatId
+          };
 
-        // 兼容 ding 格式 (来自 admin.html.js) 与 dingtalk 格式
-        const dingObj = parsed.ding || parsed.dingtalk || {};
-        const dingToken = dingObj.webhookUrl || dingObj.token || defaultDingToken;
-        const dingSecret = dingObj.secret !== undefined ? dingObj.secret : defaultDingSecret;
-        const dingEnabled = dingObj.enabled !== undefined ? dingObj.enabled : Boolean(dingToken);
+          // 兼容 ding 格式 (来自 admin.html.js) 与 dingtalk 格式
+          const dingObj = parsed.ding || parsed.dingtalk || {};
+          const dingToken = dingObj.webhookUrl || dingObj.token || defaultDingToken;
+          const dingSecret = dingObj.secret !== undefined ? dingObj.secret : defaultDingSecret;
+          const dingEnabled = dingObj.enabled !== undefined ? dingObj.enabled : Boolean(dingToken);
 
-        config.dingtalk = {
-          enabled: dingEnabled,
-          token: dingToken,
-          secret: dingSecret
-        };
+          config.dingtalk = {
+            enabled: dingEnabled,
+            token: dingToken,
+            secret: dingSecret
+          };
 
-        if (parsed.rules) config.rules = { ...config.rules, ...parsed.rules };
-        if (parsed.surgeAlert) config.surgeAlert = { ...config.surgeAlert, ...parsed.surgeAlert };
-        if (parsed.newListingAlert !== undefined) config.newListingAlert = parsed.newListingAlert;
-        if (parsed.delistAlert !== undefined) config.delistAlert = parsed.delistAlert;
-        if (parsed.priceAlertThreshold) config.priceAlertThreshold = parsed.priceAlertThreshold;
-      }
-    } catch (e) {}
+          if (parsed.rules) config.rules = { ...config.rules, ...parsed.rules };
+          if (parsed.surgeAlert) config.surgeAlert = { ...config.surgeAlert, ...parsed.surgeAlert };
+          if (parsed.newListingAlert !== undefined) config.newListingAlert = parsed.newListingAlert;
+          if (parsed.delistAlert !== undefined) config.delistAlert = parsed.delistAlert;
+          if (parsed.priceAlertThreshold) config.priceAlertThreshold = parsed.priceAlertThreshold;
+
+          // 成功从 KV 命中即同步内存
+          gInMemoryBotConfig = config;
+          break;
+        }
+      } catch (e) {}
+    }
   }
 
   // 暴露 tg 和 ding 双向别名，保证 admin.html.js 无缝回显
@@ -253,8 +274,6 @@ export async function getBotConfig(env) {
 
 export async function saveBotConfig(env, newConfig) {
   const kv = getKVBinding(env);
-  if (!kv) return false;
-
   const current = await getBotConfig(env);
   const tgObj = newConfig.tg || newConfig.telegram || {};
   const dingObj = newConfig.ding || newConfig.dingtalk || {};
@@ -297,7 +316,15 @@ export async function saveBotConfig(env, newConfig) {
     secret: merged.dingtalk.secret
   };
 
-  await kv.put(KV_KEYS.BOT_CONFIG, JSON.stringify(merged));
+  // 1. 同步保存到运行时内存
+  gInMemoryBotConfig = merged;
+
+  // 2. 若 KV 存在则持久化写入
+  if (kv) {
+    try {
+      await kv.put(KV_KEYS.BOT_CONFIG, JSON.stringify(merged));
+    } catch (e) {}
+  }
   return true;
 }
 
