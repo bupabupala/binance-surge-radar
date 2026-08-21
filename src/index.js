@@ -5,7 +5,7 @@
 
 import { KV_KEYS } from './config/constants.js';
 import { jsonResponse, getKVBinding } from './utils/response.js';
-import { checkAuth, handleLoginAction, handleLogout, getAuthConfig, savePasswordConfig } from './services/auth.js';
+import { checkAuth, handleLoginAction, handleLogout, getAuthConfig, savePasswordConfig, isInitialized, handleSetupAction } from './services/auth.js';
 import { getOrFetchDashboard, aggregateAllData } from './services/binance.js';
 import { getWatchlist, saveWatchlist } from './services/quant.js';
 import { getBotConfig, saveBotConfig, sendTestNotification, processScheduledAlerts } from './services/notifier.js';
@@ -30,6 +30,14 @@ export default {
     }
 
     try {
+      // 首次初始化接口 (/api/setup)
+      if (path === '/api/setup') {
+        if (request.method === 'POST') {
+          return handleSetupAction(request, env);
+        }
+        return renderNginxPage();
+      }
+
       const authCfg = await getAuthConfig(env);
       const loginPath = authCfg.loginPath || '/login';
       const adminPath = authCfg.adminPath || '/admin';
@@ -37,14 +45,15 @@ export default {
       // 1. 动态私密登录入口
       if (path === loginPath || path === '/login') {
         if (path === '/login' && loginPath !== '/login') {
-          // 如果管理员已经修改为自定义路径，原 /login 彻底返回 Nginx 伪装
           return renderNginxPage();
         }
 
         if (request.method === 'POST') {
           return handleLoginAction(request, env);
         }
-        return renderLoginPage();
+
+        const initialized = await isInitialized(env);
+        return renderLoginPage(!initialized);
       } else if (path === '/logout') {
         return handleLogout(request, env);
       }
@@ -59,7 +68,7 @@ export default {
         }
 
         if (authRole !== 'admin') {
-          return renderNginxPage(); // 未授权管理员直接展示 Nginx 伪装
+          return renderNginxPage();
         }
         return renderAdminPage();
       }

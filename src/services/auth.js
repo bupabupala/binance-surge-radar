@@ -1,5 +1,5 @@
 /**
- * 身份鉴权与安全会话管理 (支持自定义隐蔽路径)
+ * 身份鉴权与安全会话管理 (零硬编码密码 · 纯私有 KV 驱动)
  */
 
 import { KV_KEYS } from '../config/constants.js';
@@ -16,12 +16,13 @@ export async function hashPassword(str, salt = 'bian_secret_salt_2026') {
 export async function getAuthConfig(env) {
   const kv = getKVBinding(env);
   let config = {
-    adminPassword: env.ADMIN_PASSWORD || env.ADMIN || 'admin888',
-    guestPassword: '',
+    adminPassword: env?.ADMIN_PASSWORD || env?.ADMIN || null,
+    guestPassword: null,
     guestEnabled: false,
-    loginPath: env.LOGIN_PATH || '/login',
-    adminPath: env.ADMIN_PATH || '/admin'
+    loginPath: env?.LOGIN_PATH || '/login',
+    adminPath: env?.ADMIN_PATH || '/admin'
   };
+
   if (kv) {
     try {
       const raw = await kv.get(KV_KEYS.AUTH_CONFIG);
@@ -38,6 +39,51 @@ export async function getAuthConfig(env) {
   return config;
 }
 
+export async function isInitialized(env) {
+  const cfg = await getAuthConfig(env);
+  return Boolean(cfg.adminPassword && cfg.adminPassword.trim().length > 0);
+}
+
+export async function handleSetupAction(request, env) {
+  try {
+    const initialized = await isInitialized(env);
+    if (initialized) {
+      return jsonResponse({ success: false, message: '系统已完成初始化，禁止重复设置' }, 403);
+    }
+
+    const kv = getKVBinding(env);
+    if (!kv) {
+      return jsonResponse({ success: false, message: '未绑定 Cloudflare KV 存储，无法保存管理员密码' }, 500);
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const password = (body.password || '').trim();
+    const confirm = (body.confirmPassword || '').trim();
+
+    if (!password || password.length < 4) {
+      return jsonResponse({ success: false, message: '密码长度至少为 4 位' }, 400);
+    }
+    if (password !== confirm) {
+      return jsonResponse({ success: false, message: '两次输入的密码不一致' }, 400);
+    }
+
+    const authCfg = await getAuthConfig(env);
+    authCfg.adminPassword = password;
+    await kv.put(KV_KEYS.AUTH_CONFIG, JSON.stringify(authCfg));
+
+    const token = await hashPassword('admin:' + password);
+    const res = jsonResponse({
+      success: true,
+      message: '管理员密码初始化成功！',
+      redirect: '/'
+    });
+    res.headers.set('Set-Cookie', `bian_auth=${token}; Path=/; Max-Age=604800; HttpOnly; SameSite=Lax`);
+    return res;
+  } catch (err) {
+    return jsonResponse({ success: false, message: err.message }, 500);
+  }
+}
+
 export async function checkAuth(request, env) {
   const cookies = request.headers.get('Cookie') || '';
   const authCookie = cookies.split(';').map(c => c.trim()).find(c => c.startsWith('bian_auth='));
@@ -46,6 +92,8 @@ export async function checkAuth(request, env) {
   if (!token) return null;
 
   const authCfg = await getAuthConfig(env);
+  if (!authCfg.adminPassword) return null;
+
   const adminExpected = await hashPassword('admin:' + authCfg.adminPassword);
   if (token === adminExpected) return 'admin';
 
@@ -59,6 +107,11 @@ export async function checkAuth(request, env) {
 
 export async function handleLoginAction(request, env) {
   try {
+    const initialized = await isInitialized(env);
+    if (!initialized) {
+      return jsonResponse({ success: false, needSetup: true, message: '系统尚未初始化管理员密码，请先完成初始化' }, 400);
+    }
+
     const body = await request.json().catch(() => ({}));
     const password = (body.password || '').trim();
     if (!password) {
