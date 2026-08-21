@@ -193,13 +193,13 @@ export default {
 
       if (path === '/api/alpha') {
         if (!authRole) return jsonResponse({ code: 401, message: '请先登录' }, 401);
-        const list = await fetchAlphaTokens();
+        const list = await fetchAlphaTokens(env);
         return jsonResponse({ success: true, total: list.length, data: list }, 200, { 'Cache-Control': 'public, max-age=15, s-maxage=30' });
       }
 
       if (path === '/api/stocks') {
         if (!authRole) return jsonResponse({ code: 401, message: '请先登录' }, 401);
-        const list = await fetchStockTokens();
+        const list = await fetchStockTokens(env);
         return jsonResponse({ success: true, total: list.length, data: list }, 200, { 'Cache-Control': 'public, max-age=60, s-maxage=120' });
       }
 

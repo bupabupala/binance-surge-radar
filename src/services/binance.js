@@ -17,10 +17,10 @@ export async function fetchSpotTickers() {
   for (const url of mirrors) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
 
       const res = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
+        headers: { 'User-Agent': COMMON_HEADERS['User-Agent'], 'Accept': 'application/json' },
         signal: controller.signal
       });
       clearTimeout(timeoutId);
@@ -74,17 +74,33 @@ export async function fetchSpotTickers() {
   return result;
 }
 
-export async function fetchAlphaTokens() {
-  const pages = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+export async function fetchAlphaTokens(env = null) {
+  const kv = env ? getKVBinding(env) : null;
+  if (kv) {
+    try {
+      const cached = await kv.get(KV_KEYS.ALPHA_DATA);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+  }
+
+  const pages = [1, 2, 3, 4, 5, 6, 7, 8];
   const pagePromises = pages.map(async page => {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
       const res = await fetch(BINANCE_UPSTREAM.ALPHA_UNIFIED_RANK, {
         method: 'POST',
-        headers: { ...COMMON_HEADERS, 'Content-Type': 'application/json' },
+        headers: {
+          'User-Agent': COMMON_HEADERS['User-Agent'],
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'clientType': 'web'
+        },
         body: JSON.stringify({
-          chainIds: ['56', 'CT_501', '8453', '1', '42161', '137'],
+          chainIds: ['56', 'CT_501', '8453', '1'],
           rankType: 40,
           page,
           size: 50
@@ -111,9 +127,7 @@ export async function fetchAlphaTokens() {
     '56': 'BSC',
     'CT_501': 'Solana',
     '8453': 'Base',
-    '1': 'ETH',
-    '42161': 'Arbitrum',
-    '137': 'Polygon'
+    '1': 'ETH'
   };
 
   for (const token of allTokens) {
@@ -155,15 +169,36 @@ export async function fetchAlphaTokens() {
     });
   }
 
+  if (kv && list.length > 0) {
+    try {
+      await kv.put(KV_KEYS.ALPHA_DATA, JSON.stringify(list), { expirationTtl: 1800 });
+    } catch (e) {}
+  }
+
   return list;
 }
 
-export async function fetchStockTokens() {
+export async function fetchStockTokens(env = null) {
+  const kv = env ? getKVBinding(env) : null;
+  if (kv) {
+    try {
+      const cached = await kv.get(KV_KEYS.STOCKS_DATA);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+  }
+
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
     const res = await fetch(BINANCE_UPSTREAM.STOCK_LIST, {
-      headers: { ...COMMON_HEADERS, 'Accept-Encoding': 'identity' },
+      headers: {
+        'User-Agent': COMMON_HEADERS['User-Agent'],
+        'Accept': 'application/json',
+        'clientType': 'web'
+      },
       signal: controller.signal
     });
     clearTimeout(timeoutId);
@@ -172,7 +207,7 @@ export async function fetchStockTokens() {
     const rawList = json?.data || [];
     if (!Array.isArray(rawList)) return [];
 
-    return rawList.map(item => {
+    const list = rawList.map(item => {
       const rawSym = item.symbol || item.stockSymbol || item.ticker || 'UNKNOWN';
       let baseSym = rawSym.replace(/(\/USDT|USDT)$/i, '').trim();
       if (!baseSym.endsWith('b') && !baseSym.endsWith('B')) baseSym = baseSym + 'b';
@@ -198,6 +233,14 @@ export async function fetchStockTokens() {
         icon: item.icon || item.logo || ''
       };
     });
+
+    if (kv && list.length > 0) {
+      try {
+        await kv.put(KV_KEYS.STOCKS_DATA, JSON.stringify(list), { expirationTtl: 3600 });
+      } catch (e) {}
+    }
+
+    return list;
   } catch (e) {
     return [];
   }
@@ -214,7 +257,7 @@ export async function fetchAnnouncements() {
     const promises = catalogs.map(async cat => {
       try {
         const url = `https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=${cat.id}&pageNo=1&pageSize=8`;
-        const res = await fetch(url, { headers: { ...COMMON_HEADERS, 'lang': 'zh-CN' } });
+        const res = await fetch(url, { headers: { 'User-Agent': COMMON_HEADERS['User-Agent'], 'lang': 'zh-CN' } });
         if (!res.ok) return [];
         const json = await res.json();
         const articles = json?.data?.articles || [];
@@ -338,8 +381,8 @@ export async function aggregateAllData(env) {
 
   const [spotRes, alphaRes, stockRes, announcementsRes] = await Promise.allSettled([
     fetchSpotTickers(),
-    fetchAlphaTokens(),
-    fetchStockTokens(),
+    fetchAlphaTokens(env),
+    fetchStockTokens(env),
     fetchAnnouncements()
   ]);
 
