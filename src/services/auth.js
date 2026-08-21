@@ -1,5 +1,5 @@
 /**
- * 身份鉴权与安全会话管理 (无默认访客密码)
+ * 身份鉴权与安全会话管理 (支持自定义隐蔽路径)
  */
 
 import { KV_KEYS } from '../config/constants.js';
@@ -18,7 +18,9 @@ export async function getAuthConfig(env) {
   let config = {
     adminPassword: env.ADMIN_PASSWORD || env.ADMIN || 'admin888',
     guestPassword: '',
-    guestEnabled: false
+    guestEnabled: false,
+    loginPath: env.LOGIN_PATH || '/login',
+    adminPath: env.ADMIN_PATH || '/admin'
   };
   if (kv) {
     try {
@@ -28,6 +30,8 @@ export async function getAuthConfig(env) {
         if (parsed.adminPassword) config.adminPassword = parsed.adminPassword;
         if (parsed.guestPassword !== undefined) config.guestPassword = parsed.guestPassword;
         if (parsed.guestEnabled !== undefined) config.guestEnabled = Boolean(parsed.guestEnabled);
+        if (parsed.loginPath) config.loginPath = parsed.loginPath;
+        if (parsed.adminPath) config.adminPath = parsed.adminPath;
       }
     } catch (e) {}
   }
@@ -108,9 +112,9 @@ export async function handleLogout(request, env) {
   });
 }
 
-export async function savePasswordConfig(env, { newAdminPassword, newGuestPassword, guestEnabled }) {
+export async function savePasswordConfig(env, { newAdminPassword, newGuestPassword, guestEnabled, loginPath, adminPath }) {
   const kv = getKVBinding(env);
-  if (!kv) return { success: false, message: '未绑定 KV 存储，无法持久化保存密码' };
+  if (!kv) return { success: false, message: '未绑定 KV 存储，无法持久化保存配置' };
 
   const authCfg = await getAuthConfig(env);
   if (newAdminPassword && newAdminPassword.trim().length >= 4) {
@@ -122,8 +126,24 @@ export async function savePasswordConfig(env, { newAdminPassword, newGuestPasswo
   if (guestEnabled !== undefined) {
     authCfg.guestEnabled = Boolean(guestEnabled);
   }
+  if (loginPath && loginPath.trim().length > 0) {
+    let p = loginPath.trim();
+    if (!p.startsWith('/')) p = '/' + p;
+    authCfg.loginPath = p;
+  }
+  if (adminPath && adminPath.trim().length > 0) {
+    let p = adminPath.trim();
+    if (!p.startsWith('/')) p = '/' + p;
+    authCfg.adminPath = p;
+  }
 
   await kv.put(KV_KEYS.AUTH_CONFIG, JSON.stringify(authCfg));
   const token = await hashPassword('admin:' + authCfg.adminPassword);
-  return { success: true, token, message: '密码安全配置更新成功' };
+  return { 
+    success: true, 
+    token, 
+    loginPath: authCfg.loginPath,
+    adminPath: authCfg.adminPath,
+    message: '安全与路径配置更新成功！' 
+  };
 }

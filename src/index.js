@@ -30,8 +30,17 @@ export default {
     }
 
     try {
-      // 1. 独立认证入口 (/login, /logout)
-      if (path === '/login') {
+      const authCfg = await getAuthConfig(env);
+      const loginPath = authCfg.loginPath || '/login';
+      const adminPath = authCfg.adminPath || '/admin';
+
+      // 1. 动态私密登录入口
+      if (path === loginPath || path === '/login') {
+        if (path === '/login' && loginPath !== '/login') {
+          // 如果管理员已经修改为自定义路径，原 /login 彻底返回 Nginx 伪装
+          return renderNginxPage();
+        }
+
         if (request.method === 'POST') {
           return handleLoginAction(request, env);
         }
@@ -43,8 +52,12 @@ export default {
       // 2. 身份鉴权校验
       const authRole = await checkAuth(request, env);
 
-      // 3. 独立管理中枢 (/admin)
-      if (path === '/admin') {
+      // 3. 动态私密管理中枢
+      if (path === adminPath || path === '/admin') {
+        if (path === '/admin' && adminPath !== '/admin') {
+          return renderNginxPage();
+        }
+
         if (authRole !== 'admin') {
           return renderNginxPage(); // 未授权管理员直接展示 Nginx 伪装
         }
@@ -60,7 +73,6 @@ export default {
         if (path === '/api/admin/config') {
           if (request.method === 'GET') {
             const botConfig = await getBotConfig(env);
-            const authCfg = await getAuthConfig(env);
             const watchlist = await getWatchlist(env);
             return jsonResponse({
               success: true,
@@ -68,7 +80,9 @@ export default {
               watchlist,
               guestEnabled: authCfg.guestEnabled,
               hasAdminPassword: Boolean(authCfg.adminPassword),
-              guestPassword: authCfg.guestPassword || ''
+              guestPassword: authCfg.guestPassword || '',
+              loginPath: authCfg.loginPath || '/login',
+              adminPath: authCfg.adminPath || '/admin'
             });
           } else if (request.method === 'POST') {
             const body = await request.json();
@@ -117,7 +131,7 @@ export default {
         if (!authRole) {
           return renderNginxPage(); // 🛡️ Nginx 深度伪装
         }
-        return renderDashboardPage(authRole);
+        return renderDashboardPage(authRole, adminPath);
       }
 
       // 6. 行情公共数据 API
