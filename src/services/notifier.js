@@ -157,16 +157,22 @@ import { getWatchlist } from './quant.js';
 
 export async function getBotConfig(env) {
   const kv = getKVBinding(env);
+
+  const defaultTgToken = env?.TELEGRAM_BOT_TOKEN || '';
+  const defaultTgChatId = env?.TELEGRAM_CHAT_ID || '';
+  const defaultDingToken = env?.DINGTALK_TOKEN || '';
+  const defaultDingSecret = env?.DINGTALK_SECRET || '';
+
   let config = {
     telegram: {
-      enabled: Boolean(env?.TELEGRAM_BOT_TOKEN && env?.TELEGRAM_CHAT_ID),
-      token: env?.TELEGRAM_BOT_TOKEN || '',
-      chatId: env?.TELEGRAM_CHAT_ID || ''
+      enabled: Boolean(defaultTgToken && defaultTgChatId),
+      token: defaultTgToken,
+      chatId: defaultTgChatId
     },
     dingtalk: {
-      enabled: Boolean(env?.DINGTALK_TOKEN),
-      token: env?.DINGTALK_TOKEN || '',
-      secret: env?.DINGTALK_SECRET || ''
+      enabled: Boolean(defaultDingToken),
+      token: defaultDingToken,
+      secret: defaultDingSecret
     },
     surgeAlert: {
       enabled: true,
@@ -179,7 +185,13 @@ export async function getBotConfig(env) {
     delistAlert: {
       enabled: true
     },
-    priceAlertThreshold: 5.0
+    priceAlertThreshold: 5.0,
+    rules: {
+      pct5: true,
+      emaCross: true,
+      volume3Star: true,
+      cooldownMin: 30
+    }
   };
 
   if (kv) {
@@ -187,8 +199,32 @@ export async function getBotConfig(env) {
       const raw = await kv.get(KV_KEYS.BOT_CONFIG);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed.telegram) config.telegram = { ...config.telegram, ...parsed.telegram };
-        if (parsed.dingtalk) config.dingtalk = { ...config.dingtalk, ...parsed.dingtalk };
+
+        // 兼容 tg 格式 (来自 admin.html.js) 与 telegram 格式
+        const tgObj = parsed.tg || parsed.telegram || {};
+        const tgToken = tgObj.botToken || tgObj.token || defaultTgToken;
+        const tgChatId = tgObj.chatId || defaultTgChatId;
+        const tgEnabled = tgObj.enabled !== undefined ? tgObj.enabled : Boolean(tgToken && tgChatId);
+
+        config.telegram = {
+          enabled: tgEnabled,
+          token: tgToken,
+          chatId: tgChatId
+        };
+
+        // 兼容 ding 格式 (来自 admin.html.js) 与 dingtalk 格式
+        const dingObj = parsed.ding || parsed.dingtalk || {};
+        const dingToken = dingObj.webhookUrl || dingObj.token || defaultDingToken;
+        const dingSecret = dingObj.secret !== undefined ? dingObj.secret : defaultDingSecret;
+        const dingEnabled = dingObj.enabled !== undefined ? dingObj.enabled : Boolean(dingToken);
+
+        config.dingtalk = {
+          enabled: dingEnabled,
+          token: dingToken,
+          secret: dingSecret
+        };
+
+        if (parsed.rules) config.rules = { ...config.rules, ...parsed.rules };
         if (parsed.surgeAlert) config.surgeAlert = { ...config.surgeAlert, ...parsed.surgeAlert };
         if (parsed.newListingAlert !== undefined) config.newListingAlert = parsed.newListingAlert;
         if (parsed.delistAlert !== undefined) config.delistAlert = parsed.delistAlert;
@@ -196,13 +232,72 @@ export async function getBotConfig(env) {
       }
     } catch (e) {}
   }
+
+  // 暴露 tg 和 ding 双向别名，保证 admin.html.js 无缝回显
+  config.tg = {
+    enabled: config.telegram.enabled,
+    botToken: config.telegram.token,
+    token: config.telegram.token,
+    chatId: config.telegram.chatId
+  };
+
+  config.ding = {
+    enabled: config.dingtalk.enabled,
+    webhookUrl: config.dingtalk.token,
+    token: config.dingtalk.token,
+    secret: config.dingtalk.secret
+  };
+
   return config;
 }
 
 export async function saveBotConfig(env, newConfig) {
   const kv = getKVBinding(env);
   if (!kv) return false;
-  await kv.put(KV_KEYS.BOT_CONFIG, JSON.stringify(newConfig));
+
+  const current = await getBotConfig(env);
+  const tgObj = newConfig.tg || newConfig.telegram || {};
+  const dingObj = newConfig.ding || newConfig.dingtalk || {};
+
+  const merged = {
+    telegram: {
+      enabled: tgObj.enabled !== undefined ? tgObj.enabled : current.telegram.enabled,
+      token: tgObj.botToken || tgObj.token || current.telegram.token,
+      chatId: tgObj.chatId || current.telegram.chatId
+    },
+    dingtalk: {
+      enabled: dingObj.enabled !== undefined ? dingObj.enabled : current.dingtalk.enabled,
+      token: dingObj.webhookUrl || dingObj.token || current.dingtalk.token,
+      secret: dingObj.secret !== undefined ? dingObj.secret : current.dingtalk.secret
+    },
+    rules: {
+      ...current.rules,
+      ...(newConfig.rules || {})
+    },
+    surgeAlert: {
+      ...current.surgeAlert,
+      ...(newConfig.surgeAlert || {})
+    },
+    newListingAlert: newConfig.newListingAlert !== undefined ? newConfig.newListingAlert : current.newListingAlert,
+    delistAlert: newConfig.delistAlert !== undefined ? newConfig.delistAlert : current.delistAlert,
+    priceAlertThreshold: newConfig.priceAlertThreshold || current.priceAlertThreshold
+  };
+
+  // 保存同时注入 tg 和 ding 别名
+  merged.tg = {
+    enabled: merged.telegram.enabled,
+    botToken: merged.telegram.token,
+    token: merged.telegram.token,
+    chatId: merged.telegram.chatId
+  };
+  merged.ding = {
+    enabled: merged.dingtalk.enabled,
+    webhookUrl: merged.dingtalk.token,
+    token: merged.dingtalk.token,
+    secret: merged.dingtalk.secret
+  };
+
+  await kv.put(KV_KEYS.BOT_CONFIG, JSON.stringify(merged));
   return true;
 }
 
