@@ -1,5 +1,5 @@
 /**
- * 身份鉴权与安全会话管理
+ * 身份鉴权与安全会话管理 (无默认访客密码)
  */
 
 import { KV_KEYS } from '../config/constants.js';
@@ -17,8 +17,8 @@ export async function getAuthConfig(env) {
   const kv = getKVBinding(env);
   let config = {
     adminPassword: env.ADMIN_PASSWORD || env.ADMIN || 'admin888',
-    guestPassword: env.GUEST_PASSWORD || 'guest888',
-    guestEnabled: true
+    guestPassword: '',
+    guestEnabled: false
   };
   if (kv) {
     try {
@@ -26,8 +26,8 @@ export async function getAuthConfig(env) {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed.adminPassword) config.adminPassword = parsed.adminPassword;
-        if (parsed.guestPassword) config.guestPassword = parsed.guestPassword;
-        if (parsed.guestEnabled !== undefined) config.guestEnabled = parsed.guestEnabled;
+        if (parsed.guestPassword !== undefined) config.guestPassword = parsed.guestPassword;
+        if (parsed.guestEnabled !== undefined) config.guestEnabled = Boolean(parsed.guestEnabled);
       }
     } catch (e) {}
   }
@@ -45,8 +45,8 @@ export async function checkAuth(request, env) {
   const adminExpected = await hashPassword('admin:' + authCfg.adminPassword);
   if (token === adminExpected) return 'admin';
 
-  if (authCfg.guestEnabled) {
-    const guestExpected = await hashPassword('guest:' + authCfg.guestPassword);
+  if (authCfg.guestEnabled && authCfg.guestPassword && authCfg.guestPassword.trim().length > 0) {
+    const guestExpected = await hashPassword('guest:' + authCfg.guestPassword.trim());
     if (token === guestExpected) return 'guest';
   }
 
@@ -58,7 +58,7 @@ export async function handleLoginAction(request, env) {
     const body = await request.json().catch(() => ({}));
     const password = (body.password || '').trim();
     if (!password) {
-      return jsonResponse({ success: false, message: '请输入登录密码' }, 400);
+      return jsonResponse({ success: false, message: '请输入访问密码' }, 400);
     }
 
     const authCfg = await getAuthConfig(env);
@@ -69,27 +69,29 @@ export async function handleLoginAction(request, env) {
       const res = jsonResponse({
         success: true,
         role: 'admin',
-        message: '管理员身份验证成功',
-        redirect: '/admin'
-      });
-      res.headers.set('Set-Cookie', `bian_auth=${token}; Path=/; Max-Age=604800; HttpOnly; SameSite=Lax`);
-      return res;
-    }
-
-    // 2. 校验访客密码
-    if (authCfg.guestEnabled && password === authCfg.guestPassword) {
-      const token = await hashPassword('guest:' + authCfg.guestPassword);
-      const res = jsonResponse({
-        success: true,
-        role: 'guest',
-        message: '访客身份验证成功',
+        message: '管理员验证成功',
         redirect: '/'
       });
       res.headers.set('Set-Cookie', `bian_auth=${token}; Path=/; Max-Age=604800; HttpOnly; SameSite=Lax`);
       return res;
     }
 
-    return jsonResponse({ success: false, message: '密码错误，请重新输入' }, 401);
+    // 2. 校验访客密码 (仅在后台开启且密码非空时有效)
+    if (authCfg.guestEnabled && authCfg.guestPassword && authCfg.guestPassword.trim().length > 0) {
+      if (password === authCfg.guestPassword.trim()) {
+        const token = await hashPassword('guest:' + authCfg.guestPassword.trim());
+        const res = jsonResponse({
+          success: true,
+          role: 'guest',
+          message: '访客验证成功',
+          redirect: '/'
+        });
+        res.headers.set('Set-Cookie', `bian_auth=${token}; Path=/; Max-Age=604800; HttpOnly; SameSite=Lax`);
+        return res;
+      }
+    }
+
+    return jsonResponse({ success: false, message: '密码错误或访客访问未开启' }, 401);
   } catch (err) {
     return jsonResponse({ success: false, message: err.message }, 500);
   }
@@ -100,7 +102,7 @@ export async function handleLogout(request, env) {
   return new Response('正在退出...', {
     status: 302,
     headers: {
-      'Location': `${url.origin}/login`,
+      'Location': `${url.origin}/`,
       'Set-Cookie': 'bian_auth=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax'
     }
   });

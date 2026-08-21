@@ -12,6 +12,7 @@ import { getBotConfig, saveBotConfig, sendTestNotification, processScheduledAler
 import { renderLoginPage } from './views/login.html.js';
 import { renderAdminPage } from './views/admin.html.js';
 import { renderDashboardPage } from './views/dashboard.html.js';
+import { renderNginxPage } from './views/nginx.html.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -39,13 +40,13 @@ export default {
         return handleLogout(request, env);
       }
 
-      // 2. 身份校验
+      // 2. 身份鉴权校验
       const authRole = await checkAuth(request, env);
 
       // 3. 独立管理中枢 (/admin)
       if (path === '/admin') {
         if (authRole !== 'admin') {
-          return Response.redirect(`${url.origin}/login`, 302);
+          return renderNginxPage(); // 未授权管理员直接展示 Nginx 伪装
         }
         return renderAdminPage();
       }
@@ -67,7 +68,7 @@ export default {
               watchlist,
               guestEnabled: authCfg.guestEnabled,
               hasAdminPassword: Boolean(authCfg.adminPassword),
-              hasGuestPassword: Boolean(authCfg.guestPassword)
+              guestPassword: authCfg.guestPassword || ''
             });
           } else if (request.method === 'POST') {
             const body = await request.json();
@@ -111,10 +112,10 @@ export default {
         }
       }
 
-      // 5. 首页行情看板 (/)
+      // 5. 根路径 (/)：未登录返回 Nginx 伪装；已登录展示雷达大盘
       if (path === '/' || path === '/index.html') {
         if (!authRole) {
-          return Response.redirect(`${url.origin}/login`, 302);
+          return renderNginxPage(); // 🛡️ Nginx 深度伪装
         }
         return renderDashboardPage(authRole);
       }
@@ -190,7 +191,8 @@ export default {
         });
       }
 
-      return jsonResponse({ code: 404, message: 'Not Found' }, 404);
+      // 未匹配路由默认返回 Nginx 伪装，不暴露 404 JSON
+      return renderNginxPage();
     } catch (err) {
       return jsonResponse({ code: 500, message: err.message }, 500);
     }
