@@ -218,6 +218,7 @@ export default {
           await kv.put(KV_KEYS.DASHBOARD_DATA, JSON.stringify(data), { expirationTtl: 3600 });
           await kv.put(KV_KEYS.LAST_SYNC, String(Date.now()));
         }
+        await processScheduledAlerts(env, data);
         return jsonResponse({
           success: true,
           durationMs: Date.now() - startTime,

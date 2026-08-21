@@ -274,28 +274,37 @@ export async function fetchStockTokens(env = null) {
 
 export async function fetchAnnouncements() {
   const catalogs = [
-    { id: 93, type: '新币上新', urlPrefix: 'https://www.binance.com/zh-CN/support/announcement/list/93' },
-    { id: 161, type: '下架公告', urlPrefix: 'https://www.binance.com/zh-CN/support/announcement/list/161' },
-    { id: 48, type: '最新活动', urlPrefix: 'https://www.binance.com/zh-CN/support/announcement/list/48' }
+    { id: 48, type: '新币上新' },
+    { id: 93, type: 'Alpha/活动' },
+    { id: 128, type: '空投奖励' },
+    { id: 161, type: '下架停牌' }
   ];
 
   try {
     const promises = catalogs.map(async cat => {
       try {
-        const url = `https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=${cat.id}&pageNo=1&pageSize=8`;
-        const res = await fetch(url, { headers: { 'User-Agent': COMMON_HEADERS['User-Agent'], 'lang': 'zh-CN' } });
+        const url = `https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=${cat.id}&pageNo=1&pageSize=10`;
+        const res = await fetch(url, { headers: { 'lang': 'zh-CN', 'clienttype': 'web' } });
         if (!res.ok) return [];
         const json = await res.json();
-        const articles = json?.data?.articles || [];
-        return articles.map(a => ({
-          id: String(a.id || a.code),
-          code: a.code,
-          title: a.title,
-          url: `https://www.binance.com/zh-CN/support/announcement/${a.code}`,
-          type: cat.type,
-          releaseDate: new Date(a.releaseDate || Date.now()).toISOString(),
-          timeAgo: formatTimeAgo(a.releaseDate)
-        }));
+        const articles = json?.data?.catalogs?.[0]?.articles || json?.data?.articles || [];
+        return articles.map(a => {
+          let itemType = cat.type;
+          if (cat.id === 93 && (a.title.includes('Alpha') || a.title.includes('alpha'))) {
+            itemType = 'Alpha专区';
+          }
+          return {
+            id: String(a.id || a.code),
+            code: a.code,
+            title: a.title,
+            url: `https://www.binance.com/zh-CN/support/announcement/${a.code}`,
+            type: itemType,
+            catalogId: cat.id,
+            releaseDate: new Date(a.releaseDate || Date.now()).toISOString(),
+            releaseDateTimestamp: a.releaseDate || Date.now(),
+            timeAgo: formatTimeAgo(a.releaseDate)
+          };
+        });
       } catch (e) {
         return [];
       }
@@ -305,23 +314,21 @@ export async function fetchAnnouncements() {
     const flattened = results.flat();
     if (flattened.length > 0) {
       return {
-        spot: flattened.filter(a => a.type === '新币上新'),
-        futures: flattened.filter(a => a.type === '最新活动'),
-        alpha: flattened.filter(a => a.type === '下架公告')
+        all: flattened.sort((a, b) => (b.releaseDateTimestamp || 0) - (a.releaseDateTimestamp || 0)),
+        newListings: flattened.filter(a => a.catalogId === 48),
+        alphaEvents: flattened.filter(a => a.catalogId === 93),
+        airdrops: flattened.filter(a => a.catalogId === 128),
+        delistings: flattened.filter(a => a.catalogId === 161)
       };
     }
   } catch (e) {}
 
   return {
-    spot: [
-      { type: '新币上新', title: '数字货币及交易对上新公告专区 (点击直达明细)', url: 'https://www.binance.com/zh-CN/support/announcement/list/93', timeAgo: '官方专区' }
-    ],
-    futures: [
-      { type: '合约上线', title: '币安合约上线与最新活动公告专区', url: 'https://www.binance.com/zh-CN/support/announcement/list/48', timeAgo: '官方专区' }
-    ],
-    alpha: [
-      { type: '下架代币', title: '下架代币及交易对公告专区 (点击直达明细)', url: 'https://www.binance.com/zh-CN/support/announcement/list/161', timeAgo: '官方专区' }
-    ]
+    all: [],
+    newListings: [],
+    alphaEvents: [],
+    airdrops: [],
+    delistings: []
   };
 }
 

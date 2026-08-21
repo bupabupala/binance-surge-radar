@@ -1,3 +1,152 @@
+
+function extractPlainTextFromAst(node, maxLen = 300) {
+  if (!node) return '';
+  let result = '';
+  
+  function walk(n) {
+    if (!n || result.length >= maxLen + 100) return;
+    if (typeof n === 'string') {
+      result += n + ' ';
+      return;
+    }
+    if (n.node === 'text' && n.text) {
+      result += n.text.trim() + ' ';
+    }
+    if (n.child) {
+      if (Array.isArray(n.child)) {
+        n.child.forEach(walk);
+      } else if (typeof n.child === 'object') {
+        Object.values(n.child).forEach(walk);
+      }
+    }
+  }
+  
+  try {
+    walk(node);
+  } catch (e) {}
+  
+  result = result.replace(/\s+/g, ' ').trim();
+  result = result.replace(/^这是一般性公告[，,][^。]+。适用条款和条件。[ ]*亲爱的用户[：:]/g, '').trim();
+  result = result.replace(/^亲爱的用户[：:]/g, '').trim();
+  if (result.length > maxLen) {
+    result = result.slice(0, maxLen) + '...';
+  }
+  return result;
+}
+
+// 🎯 币安官方 4 大公告分类 7×24h 自动差分监听与全要素推送 (标题 + 正文核心摘要 + 原文链接)
+export async function detectNewAnnouncementsAndNotify(env, botConfig, announcements) {
+  const kv = getKVBinding(env);
+  if (!kv || !announcements) return;
+
+  const allItems = announcements.all || [
+    ...(announcements.newListings || []),
+    ...(announcements.alphaEvents || []),
+    ...(announcements.airdrops || []),
+    ...(announcements.delistings || [])
+  ];
+
+  if (!Array.isArray(allItems) || allItems.length === 0) return;
+
+  try {
+    const rawSeen = await kv.get('bian:seen_announcements:v2');
+    let seenCodes = new Set(rawSeen ? JSON.parse(rawSeen) : []);
+
+    // 首次运行初始化历史缓存，不爆发推送历史公告
+    if (seenCodes.size === 0) {
+      const initialCodes = allItems.map(a => a.code || a.id).filter(Boolean);
+      await kv.put('bian:seen_announcements:v2', JSON.stringify(initialCodes), { expirationTtl: 86400 * 30 });
+      return;
+    }
+
+    const newArticles = allItems.filter(a => (a.code || a.id) && !seenCodes.has(a.code || a.id));
+
+    if (newArticles.length > 0) {
+      // 一次最多推送 3 条最新，避免消息轰炸
+      for (const item of newArticles.slice(0, 3)) {
+        const code = item.code || item.id;
+        let summaryText = '';
+
+        // 异步拉取正文 AST 提取核心摘要
+        try {
+          const res = await fetch(`https://www.binance.com/bapi/composite/v1/public/cms/article/detail/query?articleCode=${code}`, {
+            headers: { 'lang': 'zh-CN', 'User-Agent': 'Mozilla/5.0' }
+          });
+          if (res.ok) {
+            const detailJson = await res.json();
+            const rawBody = detailJson?.data?.body;
+            if (rawBody) {
+              const parsedAst = JSON.parse(rawBody);
+              summaryText = extractPlainTextFromAst(parsedAst, 280);
+            }
+          }
+        } catch (err) {}
+
+        if (!summaryText) {
+          summaryText = '暂无详细正文说明，请直接点击下方官方链接查看完整细则。';
+        }
+
+        let badgeTitle = '币安官方公告';
+        let prefixIcon = '📢';
+        if (item.type === 'Alpha专区' || item.catalogId === 93) {
+          badgeTitle = '币安 Alpha 官方动态';
+          prefixIcon = '🚀';
+        } else if (item.type === '新币上新' || item.catalogId === 48) {
+          badgeTitle = '币安新币上新公告';
+          prefixIcon = '💎';
+        } else if (item.type === '空投奖励' || item.catalogId === 128) {
+          badgeTitle = '币安官方空投分发';
+          prefixIcon = '🎁';
+        } else if (item.type === '下架停牌' || item.catalogId === 161) {
+          badgeTitle = '币安代币下架停牌';
+          prefixIcon = '⚠️';
+        }
+
+        const articleUrl = `https://www.binance.com/zh-CN/support/announcement/${code}`;
+        const timeStr = new Date(item.releaseDateTimestamp || Date.now()).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+
+        const title = `${prefixIcon}【${badgeTitle}】${item.title}`;
+
+        const textHtml = `<b>${prefixIcon}【${badgeTitle}】</b>
+` +
+          `<b>${item.title}</b>
+
+` +
+          `• 分类标签：<b>${item.type || '官方公告'}</b>
+` +
+          `• 发布时间：${timeStr}
+` +
+          `• <b>核心内容摘要</b>：
+${summaryText}
+
+` +
+          `• 🔗 <a href="${articleUrl}">点击查看官方原文细则</a>`;
+
+        const textMd = `### ${prefixIcon}【${badgeTitle}】
+` +
+          `#### **${item.title}**
+
+` +
+          `- **分类标签**：\`${item.type || '官方公告'}\`
+` +
+          `- **发布时间**：${timeStr}
+` +
+          `- **核心内容摘要**：
+> ${summaryText}
+
+` +
+          `[👉 点击直达官方原文细则](${articleUrl})`;
+
+        await sendUnifiedBroadcast(botConfig, title, textHtml, textMd);
+        seenCodes.add(code);
+      }
+
+      // 更新已发送集合
+      await kv.put('bian:seen_announcements:v2', JSON.stringify([...seenCodes]), { expirationTtl: 86400 * 30 });
+    }
+  } catch (e) {}
+}
+
 /**
  * 消息推送通知与预警中心 (Telegram / 钉钉 / 新币上架 / 下架停牌 / 量化信号)
  */
@@ -220,27 +369,44 @@ export async function processScheduledAlerts(env, freshData) {
   const currentSymbols = activeSpot.map(item => item.symbol);
   const preTradingSymbols = (freshData.preTradingSymbols || []);
 
-  // 1. 检测新币上线与下架
+  // 1. 📢 7×24h 币安官方 4 大分类新公告差分监听与全要素推送 (含标题、正文核心摘要、原文直达)
+  if (freshData.announcements) {
+    await detectNewAnnouncementsAndNotify(env, botConfig, freshData.announcements);
+  }
+
+  // 2. 检测新币上线与下架
   await detectSymbolChangesAndNotify(env, botConfig, currentSymbols, preTradingSymbols);
 
-  // 2. 检测放量星级异动 (< $100M 市值)
+  // 3. 检测放量星级异动 (< $100M 市值)
   const surge15m = (freshData.surge && freshData.surge['15m']) || [];
   for (const item of surge15m.slice(0, 3)) {
     if (item.stars >= (botConfig.surgeAlert?.minStars || 3) && item.surgeMultiplier >= (botConfig.surgeAlert?.minSurgeMultiplier || 3.0)) {
       const clean = item.ticker || item.symbol.replace(/USDT$/, '');
       const title = `🔥【小市值放量异动】${clean} 放量 ${item.surgeMultiplier}x (${item.starDisplay})`;
-      const textHtml = `<b>🔥【小市值放量异动雷达】</b>\n\n` +
-        `• 资产：<b>${clean}</b> (${item.zhName || ''})\n` +
-        `• 放量星级：<b>${item.starDisplay} (${item.surgeMultiplier}x)</b>\n` +
-        `• 最新价格：$${item.price} (${item.priceChange >= 0 ? '+' : ''}${item.priceChange}%)\n` +
-        `• 市值：$${(item.marketCap / 1e6).toFixed(2)}M (&lt; $100M)\n` +
+      const textHtml = `<b>🔥【小市值放量异动雷达】</b>
+
+` +
+        `• 资产：<b>${clean}</b> (${item.zhName || ''})
+` +
+        `• 放量星级：<b>${item.starDisplay} (${item.surgeMultiplier}x)</b>
+` +
+        `• 最新价格：$${item.price} (${item.priceChange >= 0 ? '+' : ''}${item.priceChange}%)
+` +
+        `• 市值：$${(item.marketCap / 1e6).toFixed(2)}M (&lt; $100M)
+` +
         `• 时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
 
-      const textMd = `### 🔥【小市值放量异动雷达】\n\n` +
-        `- **资产**：**${clean}** (${item.zhName || ''})\n` +
-        `- **放量星级**：**${item.starDisplay} (${item.surgeMultiplier}x)**\n` +
-        `- **最新价格**：$${item.price} (${item.priceChange >= 0 ? '+' : ''}${item.priceChange}%)\n` +
-        `- **市值**：$${(item.marketCap / 1e6).toFixed(2)}M (< $100M)\n` +
+      const textMd = `### 🔥【小市值放量异动雷达】
+
+` +
+        `- **资产**：**${clean}** (${item.zhName || ''})
+` +
+        `- **放量星级**：**${item.starDisplay} (${item.surgeMultiplier}x)**
+` +
+        `- **最新价格**：$${item.price} (${item.priceChange >= 0 ? '+' : ''}${item.priceChange}%)
+` +
+        `- **市值**：$${(item.marketCap / 1e6).toFixed(2)}M (< $100M)
+` +
         `- **时间**：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
 
       await sendUnifiedBroadcast(botConfig, title, textHtml, textMd);
