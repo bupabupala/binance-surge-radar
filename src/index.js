@@ -169,9 +169,21 @@ export default {
         if (path === '/api/admin/test-notify') {
           if (request.method === 'POST') {
             const body = await request.json().catch(() => ({}));
-            const botCfg = body.botConfig || (await getBotConfig(env));
+            let botCfg = body.botConfig || (await getBotConfig(env));
+            if (body.botConfig) {
+              await saveBotConfig(env, body.botConfig);
+            }
             const results = await sendTestNotification(botCfg);
-            return jsonResponse({ success: true, message: '测试通知指令已发送', results });
+            const errItem = Array.isArray(results) ? results.find(r => !r.success) : null;
+            const allSuccess = Array.isArray(results) && results.length > 0 && !errItem;
+            const message = results.length === 0 
+              ? '未开启任何推送通道或凭证为空 (请确认已勾选「启用推送」并填入 Token 和 Chat ID)'
+              : (errItem ? (errItem.error || errItem.message || '推送失败，请检查凭证') : '测试通知已成功送达 Telegram / 钉钉！');
+            return jsonResponse({
+              success: allSuccess,
+              message,
+              results
+            }, allSuccess ? 200 : 400);
           }
         }
       }

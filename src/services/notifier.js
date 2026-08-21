@@ -329,30 +329,36 @@ export async function saveBotConfig(env, newConfig) {
 }
 
 export async function sendTelegramMessage(token, chatId, text) {
-  if (!token || !chatId) return { success: false, message: 'Telegram Token 或 ChatID 未配置' };
+  const cleanToken = (token || '').trim();
+  const cleanChatId = (chatId || '').trim();
+  if (!cleanToken || !cleanChatId) return { success: false, message: 'Telegram Token 或 ChatID 未配置' };
   try {
-    const url = `https://api.telegram.org/bot${token}/sendMessage`;
+    const url = `https://api.telegram.org/bot${cleanToken}/sendMessage`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chat_id: chatId,
+        chat_id: cleanChatId,
         text,
         parse_mode: 'HTML',
         disable_web_page_preview: false
       })
     });
-    const data = await res.json();
-    return { success: res.ok && data.ok, data };
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { success: false, error: data.description || `HTTP ${res.status}`, data };
+    }
+    return { success: true, data };
   } catch (err) {
     return { success: false, error: err.message };
   }
 }
 
 export async function sendDingTalkMessage(token, secret, title, markdownContent) {
-  if (!token) return { success: false, message: '钉钉 Token 未配置' };
+  const rawToken = (token || '').trim();
+  if (!rawToken) return { success: false, message: '钉钉 Token 未配置' };
   try {
-    let url = `https://oapi.dingtalk.com/robot/send?access_token=${token}`;
+    let url = rawToken.startsWith('http') ? rawToken : `https://oapi.dingtalk.com/robot/send?access_token=${rawToken}`;
     if (secret) {
       const timestamp = Date.now();
       const enc = new TextEncoder();
@@ -366,7 +372,8 @@ export async function sendDingTalkMessage(token, secret, title, markdownContent)
       );
       const signature = await crypto.subtle.sign('HMAC', key, enc.encode(stringToSign));
       const signBase64 = btoa(String.fromCharCode(...new Uint8Array(signature)));
-      url += `&timestamp=${timestamp}&sign=${encodeURIComponent(signBase64)}`;
+      const sep = url.includes('?') ? '&' : '?';
+      url += `${sep}timestamp=${timestamp}&sign=${encodeURIComponent(signBase64)}`;
     }
 
     const res = await fetch(url, {
@@ -380,8 +387,11 @@ export async function sendDingTalkMessage(token, secret, title, markdownContent)
         }
       })
     });
-    const data = await res.json();
-    return { success: res.ok && data.errcode === 0, data };
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.errcode !== 0) {
+      return { success: false, error: data.errmsg || `HTTP ${res.status}`, data };
+    }
+    return { success: true, data };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -389,12 +399,32 @@ export async function sendDingTalkMessage(token, secret, title, markdownContent)
 
 export async function sendUnifiedBroadcast(botConfig, title, textHtml, textMarkdown) {
   const promises = [];
-  if (botConfig.telegram?.enabled && botConfig.telegram?.token && botConfig.telegram?.chatId) {
-    promises.push(sendTelegramMessage(botConfig.telegram.token, botConfig.telegram.chatId, textHtml));
+  if (!botConfig) {
+    return [{ success: false, message: '未提供机器人配置' }];
   }
-  if (botConfig.dingtalk?.enabled && botConfig.dingtalk?.token) {
-    promises.push(sendDingTalkMessage(botConfig.dingtalk.token, botConfig.dingtalk.secret, title, textMarkdown));
+
+  const tg = botConfig.tg || botConfig.telegram || {};
+  const tgToken = (tg.botToken || tg.token || '').trim();
+  const tgChatId = (tg.chatId || '').trim();
+  const tgEnabled = tg.enabled !== undefined ? tg.enabled : Boolean(tgToken && tgChatId);
+
+  if (tgEnabled && tgToken && tgChatId) {
+    promises.push(sendTelegramMessage(tgToken, tgChatId, textHtml));
   }
+
+  const ding = botConfig.ding || botConfig.dingtalk || {};
+  const dingToken = (ding.webhookUrl || ding.token || '').trim();
+  const dingSecret = (ding.secret || '').trim();
+  const dingEnabled = ding.enabled !== undefined ? ding.enabled : Boolean(dingToken);
+
+  if (dingEnabled && dingToken) {
+    promises.push(sendDingTalkMessage(dingToken, dingSecret, title, textMarkdown));
+  }
+
+  if (promises.length === 0) {
+    return [{ success: false, message: '未开启任何推送通道或凭证为空 (请确认已勾选「启用推送」并填入 Token 和 Chat ID)' }];
+  }
+
   return Promise.all(promises);
 }
 
