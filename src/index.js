@@ -1,0 +1,212 @@
+/**
+ * Binance Multi-Market Monitor & Volume Surge Radar
+ * Cloudflare Worker ES Module Entry Point (src/index.js)
+ */
+
+import { KV_KEYS } from './config/constants.js';
+import { jsonResponse, getKVBinding } from './utils/response.js';
+import { checkAuth, handleLoginAction, handleLogout, getAuthConfig, savePasswordConfig } from './services/auth.js';
+import { getOrFetchDashboard, aggregateAllData } from './services/binance.js';
+import { getWatchlist, saveWatchlist } from './services/quant.js';
+import { getBotConfig, saveBotConfig, sendTestNotification, processScheduledAlerts } from './services/notifier.js';
+import { renderLoginPage } from './views/login.html.js';
+import { renderAdminPage } from './views/admin.html.js';
+import { renderDashboardPage } from './views/dashboard.html.js';
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+        }
+      });
+    }
+
+    try {
+      // 1. 独立认证入口 (/login, /logout)
+      if (path === '/login') {
+        if (request.method === 'POST') {
+          return handleLoginAction(request, env);
+        }
+        return renderLoginPage();
+      } else if (path === '/logout') {
+        return handleLogout(request, env);
+      }
+
+      // 2. 身份校验
+      const authRole = await checkAuth(request, env);
+
+      // 3. 独立管理中枢 (/admin)
+      if (path === '/admin') {
+        if (authRole !== 'admin') {
+          return Response.redirect(`${url.origin}/login`, 302);
+        }
+        return renderAdminPage();
+      }
+
+      // 4. 管理员专属 API (/api/admin/*)
+      if (path.startsWith('/api/admin/')) {
+        if (authRole !== 'admin') {
+          return jsonResponse({ code: 401, message: '未授权或无管理员权限' }, 401);
+        }
+
+        if (path === '/api/admin/config') {
+          if (request.method === 'GET') {
+            const botConfig = await getBotConfig(env);
+            const authCfg = await getAuthConfig(env);
+            const watchlist = await getWatchlist(env);
+            return jsonResponse({
+              success: true,
+              botConfig,
+              watchlist,
+              guestEnabled: authCfg.guestEnabled,
+              hasAdminPassword: Boolean(authCfg.adminPassword),
+              hasGuestPassword: Boolean(authCfg.guestPassword)
+            });
+          } else if (request.method === 'POST') {
+            const body = await request.json();
+            if (body.botConfig) {
+              await saveBotConfig(env, body.botConfig);
+            }
+            return jsonResponse({ success: true, message: '机器人及预警配置已保存' });
+          }
+        }
+
+        if (path === '/api/admin/watchlist') {
+          if (request.method === 'GET') {
+            const list = await getWatchlist(env);
+            return jsonResponse({ success: true, data: list });
+          } else if (request.method === 'POST') {
+            const body = await request.json();
+            const list = await saveWatchlist(env, body.watchlist);
+            return jsonResponse({ success: true, message: '自选列表已同步', data: list });
+          }
+        }
+
+        if (path === '/api/admin/password') {
+          if (request.method === 'POST') {
+            const body = await request.json();
+            const res = await savePasswordConfig(env, body);
+            const resp = jsonResponse(res, res.success ? 200 : 400);
+            if (res.token) {
+              resp.headers.set('Set-Cookie', `bian_auth=${res.token}; Path=/; Max-Age=604800; HttpOnly; SameSite=Lax`);
+            }
+            return resp;
+          }
+        }
+
+        if (path === '/api/admin/test-notify') {
+          if (request.method === 'POST') {
+            const body = await request.json().catch(() => ({}));
+            const botCfg = body.botConfig || (await getBotConfig(env));
+            const results = await sendTestNotification(botCfg);
+            return jsonResponse({ success: true, message: '测试通知指令已发送', results });
+          }
+        }
+      }
+
+      // 5. 首页行情看板 (/)
+      if (path === '/' || path === '/index.html') {
+        if (!authRole) {
+          return Response.redirect(`${url.origin}/login`, 302);
+        }
+        return renderDashboardPage(authRole);
+      }
+
+      // 6. 行情公共数据 API
+      if (path === '/api/dashboard') {
+        if (!authRole) return jsonResponse({ code: 401, message: '请先登录' }, 401);
+        const data = await getOrFetchDashboard(env);
+        return jsonResponse(data, 200, { 'Cache-Control': 'public, max-age=15, s-maxage=30' });
+      }
+
+      if (path === '/api/rank') {
+        if (!authRole) return jsonResponse({ code: 401, message: '请先登录' }, 401);
+        const type = url.searchParams.get('type') || 'all';
+        const sort = url.searchParams.get('sort') || 'desc';
+        const sortBy = url.searchParams.get('sortBy') || 'marketCap';
+        const dashboard = await getOrFetchDashboard(env);
+        let list = [];
+        if (type === 'spot' || type === 'all') list.push(...(dashboard.spot || []));
+        if (type === 'alpha' || type === 'all') list.push(...(dashboard.alpha || []));
+        if (type === 'stocks' || type === 'all') list.push(...(dashboard.stocks || []));
+
+        list.sort((a, b) => {
+          let valA = Number(a[sortBy]) || 0;
+          let valB = Number(b[sortBy]) || 0;
+          return sort === 'asc' ? valA - valB : valB - valA;
+        });
+
+        return jsonResponse({ success: true, total: list.length, data: list });
+      }
+
+      if (path === '/api/surge') {
+        if (!authRole) return jsonResponse({ code: 401, message: '请先登录' }, 401);
+        const window = url.searchParams.get('window') || '15m';
+        const dashboard = await getOrFetchDashboard(env);
+        const list = (dashboard.surge && dashboard.surge[window]) || [];
+        return jsonResponse({ success: true, window, total: list.length, data: list });
+      }
+
+      if (path === '/api/announcements') {
+        if (!authRole) return jsonResponse({ code: 401, message: '请先登录' }, 401);
+        const dashboard = await getOrFetchDashboard(env);
+        return jsonResponse({ success: true, data: dashboard.announcements || { spot: [], futures: [], alpha: [] } });
+      }
+
+      if (path === '/api/sync') {
+        if (authRole !== 'admin') return jsonResponse({ code: 403, message: '仅管理员可手动触发同步' }, 403);
+        const startTime = Date.now();
+        const data = await aggregateAllData(env);
+        const kv = getKVBinding(env);
+        if (kv) {
+          await kv.put(KV_KEYS.DASHBOARD_DATA, JSON.stringify(data), { expirationTtl: 3600 });
+          await kv.put(KV_KEYS.LAST_SYNC, String(Date.now()));
+        }
+        return jsonResponse({
+          success: true,
+          durationMs: Date.now() - startTime,
+          message: 'Data synced successfully',
+          counts: data.counts,
+          timestamp: data.timestamp
+        });
+      }
+
+      if (path === '/api/health') {
+        const kv = getKVBinding(env);
+        let lastSync = null;
+        if (kv) lastSync = await kv.get(KV_KEYS.LAST_SYNC);
+        return jsonResponse({
+          status: 'ok',
+          kvBound: Boolean(kv),
+          lastSyncTimestamp: lastSync ? Number(lastSync) : null,
+          serverTime: new Date().toISOString()
+        });
+      }
+
+      return jsonResponse({ code: 404, message: 'Not Found' }, 404);
+    } catch (err) {
+      return jsonResponse({ code: 500, message: err.message }, 500);
+    }
+  },
+
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil((async () => {
+      try {
+        const data = await aggregateAllData(env);
+        const kv = getKVBinding(env);
+        if (kv) {
+          await kv.put(KV_KEYS.DASHBOARD_DATA, JSON.stringify(data), { expirationTtl: 3600 });
+          await kv.put(KV_KEYS.LAST_SYNC, String(Date.now()));
+        }
+        await processScheduledAlerts(env, data);
+      } catch (e) {}
+    })());
+  }
+};
