@@ -164,6 +164,7 @@ export async function getBotConfig(env) {
   const defaultTgChatId = env?.TELEGRAM_CHAT_ID || env?.TG_CHAT_ID || env?.CHAT_ID || env?.TELEGRAM_CHATID || '';
   const defaultDingToken = env?.DINGTALK_TOKEN || env?.DINGTALK_WEBHOOK || env?.DING_WEBHOOK || env?.DING_TOKEN || env?.DINGTALK_URL || '';
   const defaultDingSecret = env?.DINGTALK_SECRET || env?.DING_SECRET || '';
+  const defaultDingKeyword = env?.DINGTALK_KEYWORD || env?.DING_KEYWORD || '';
 
   let config = {
     telegram: {
@@ -174,7 +175,8 @@ export async function getBotConfig(env) {
     dingtalk: {
       enabled: Boolean(defaultDingToken),
       token: defaultDingToken,
-      secret: defaultDingSecret
+      secret: defaultDingSecret,
+      keyword: defaultDingKeyword
     },
     surgeAlert: {
       enabled: true,
@@ -232,12 +234,14 @@ export async function getBotConfig(env) {
           const dingObj = parsed.ding || parsed.dingtalk || {};
           const dingToken = dingObj.webhookUrl || dingObj.token || defaultDingToken;
           const dingSecret = dingObj.secret !== undefined ? dingObj.secret : defaultDingSecret;
+          const dingKeyword = dingObj.keyword !== undefined ? dingObj.keyword : defaultDingKeyword;
           const dingEnabled = dingObj.enabled !== undefined ? dingObj.enabled : Boolean(dingToken);
 
           config.dingtalk = {
             enabled: dingEnabled,
             token: dingToken,
-            secret: dingSecret
+            secret: dingSecret,
+            keyword: dingKeyword
           };
 
           if (parsed.rules) config.rules = { ...config.rules, ...parsed.rules };
@@ -266,7 +270,8 @@ export async function getBotConfig(env) {
     enabled: config.dingtalk.enabled,
     webhookUrl: config.dingtalk.token,
     token: config.dingtalk.token,
-    secret: config.dingtalk.secret
+    secret: config.dingtalk.secret,
+    keyword: config.dingtalk.keyword
   };
 
   return config;
@@ -287,7 +292,8 @@ export async function saveBotConfig(env, newConfig) {
     dingtalk: {
       enabled: dingObj.enabled !== undefined ? dingObj.enabled : current.dingtalk.enabled,
       token: dingObj.webhookUrl || dingObj.token || current.dingtalk.token,
-      secret: dingObj.secret !== undefined ? dingObj.secret : current.dingtalk.secret
+      secret: dingObj.secret !== undefined ? dingObj.secret : current.dingtalk.secret,
+      keyword: dingObj.keyword !== undefined ? dingObj.keyword : current.dingtalk.keyword
     },
     rules: {
       ...current.rules,
@@ -313,7 +319,8 @@ export async function saveBotConfig(env, newConfig) {
     enabled: merged.dingtalk.enabled,
     webhookUrl: merged.dingtalk.token,
     token: merged.dingtalk.token,
-    secret: merged.dingtalk.secret
+    secret: merged.dingtalk.secret,
+    keyword: merged.dingtalk.keyword
   };
 
   // 1. 同步保存到运行时内存
@@ -358,7 +365,7 @@ export async function sendTelegramMessage(token, chatId, text) {
   }
 }
 
-export async function sendDingTalkMessage(token, secret, title, markdownContent) {
+export async function sendDingTalkMessage(token, secret, title, markdownContent, keyword = '') {
   const rawToken = (token || '').trim();
   if (!rawToken) return { success: false, message: '钉钉 Token 未配置' };
   try {
@@ -380,14 +387,22 @@ export async function sendDingTalkMessage(token, secret, title, markdownContent)
       url += `${sep}timestamp=${timestamp}&sign=${encodeURIComponent(signBase64)}`;
     }
 
+    const cleanKeyword = (keyword || '').trim();
+    let finalTitle = title;
+    let finalContent = markdownContent;
+    if (cleanKeyword && !title.includes(cleanKeyword) && !markdownContent.includes(cleanKeyword)) {
+      finalTitle = `[${cleanKeyword}] ${title}`;
+      finalContent = `> **【${cleanKeyword}】**\n\n${markdownContent}`;
+    }
+
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         msgtype: 'markdown',
         markdown: {
-          title,
-          text: markdownContent
+          title: finalTitle,
+          text: finalContent
         }
       })
     });
@@ -419,10 +434,11 @@ export async function sendUnifiedBroadcast(botConfig, title, textHtml, textMarkd
   const ding = botConfig.ding || botConfig.dingtalk || {};
   const dingToken = (ding.webhookUrl || ding.token || '').trim();
   const dingSecret = (ding.secret || '').trim();
+  const dingKeyword = (ding.keyword || '').trim();
   const dingEnabled = ding.enabled !== undefined ? ding.enabled : Boolean(dingToken);
 
   if (dingEnabled && dingToken) {
-    promises.push(sendDingTalkMessage(dingToken, dingSecret, title, textMarkdown));
+    promises.push(sendDingTalkMessage(dingToken, dingSecret, title, textMarkdown, dingKeyword));
   }
 
   if (promises.length === 0) {
