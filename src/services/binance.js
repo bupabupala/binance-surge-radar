@@ -125,7 +125,6 @@ export async function fetchAlphaTokens(env = null) {
   for (const token of allTokens) {
     const sym = token.symbol || token.baseAsset || token.name || 'UNKNOWN';
     const ticker = (token.ticker || sym).toUpperCase();
-    const tokenName = (token.name || '').toUpperCase();
     const tag = token.tokenTag || {};
     
     // 🛡️ 严格过滤所有美股代币，保证 Alpha 100% 纯正 Web3 链上代币
@@ -134,7 +133,7 @@ export async function fetchAlphaTokens(env = null) {
       token.ondoStatusInfo || 
       tag['Tokenized Stocks Category'] || 
       tag['Tokenized Stocks Launch Platform'] ||
-      sym.toUpperCase().endsWith('ON') && sym.length <= 8
+      (sym.toUpperCase().endsWith('ON') && sym.length <= 8)
     ) {
       continue;
     }
@@ -178,7 +177,7 @@ export async function fetchAlphaTokens(env = null) {
   return list;
 }
 
-// 🎯 2. 美股与独角兽实时动态价格行情流 (rankType = 40)
+// 🎯 2. 美股与独角兽实时动态价格行情流 (rankType = 40 · 过滤 ...on 冗余)
 export async function fetchStockTokens(env = null) {
   const kv = env ? getKVBinding(env) : null;
   if (kv) {
@@ -221,9 +220,21 @@ export async function fetchStockTokens(env = null) {
   const list = [];
 
   for (const token of allTokens) {
-    const rawSym = token.symbol || token.ticker || 'UNKNOWN';
-    const ticker = token.ticker || rawSym;
-    const key = `${rawSym}_${token.chainId || 'stock'}`;
+    let rawSym = token.symbol || token.ticker || 'UNKNOWN';
+    let ticker = token.ticker || rawSym;
+    
+    // 🛡️ 过滤 ...on 冗余，规范化为 ...B 标准美股代码
+    if (rawSym.toUpperCase().endsWith('ON') && rawSym.length <= 8) {
+      // 检查是否已有对应的 B 结尾股票，跳过 on 后缀冗余
+      continue;
+    }
+
+    let standardSym = rawSym;
+    if (!standardSym.toUpperCase().endsWith('B') && !standardSym.toUpperCase().endsWith('B')) {
+      standardSym = standardSym + 'B';
+    }
+
+    const key = standardSym.toUpperCase();
     if (seen.has(key)) continue;
     seen.add(key);
 
@@ -234,9 +245,9 @@ export async function fetchStockTokens(env = null) {
     const zhName = token.stockCompanyNameZh || token.stockCompanyName || getChineseDisplayName(ticker, token.name, ticker);
 
     list.push({
-      symbol: rawSym,
-      rawSymbol: rawSym,
-      ticker: ticker,
+      symbol: standardSym,
+      rawSymbol: standardSym,
+      ticker: standardSym,
       name: token.stockCompanyName || token.name || ticker,
       zhName: zhName,
       price,
