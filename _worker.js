@@ -1149,8 +1149,8 @@ function handleHtmlPage(request, env) {
     <div class="flex items-center gap-3 flex-wrap">
       <!-- 搜索框 -->
       <div class="relative">
-        <input id="globalSearchInput" type="text" placeholder="搜索 USDT 币种 (BTC, PEPE...)" 
-          class="w-44 sm:w-60 bg-brand-card border border-brand-border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-brand-yellow transition" />
+        <input id="globalSearchInput" type="text" placeholder="搜索资产 / 币种 (BTC, SpaceX, 比特币...)" 
+          class="w-48 sm:w-64 bg-brand-card border border-brand-border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-brand-yellow transition" />
         <span class="absolute right-2.5 top-2 text-xs text-gray-500 font-mono">/</span>
       </div>
 
@@ -1174,8 +1174,8 @@ function handleHtmlPage(request, env) {
       <div class="flex flex-wrap items-center justify-between gap-4 mb-4 pb-3 border-b border-brand-border/60">
         <div class="flex items-center gap-2">
           <span class="text-xl">🔥</span>
-          <h2 class="text-base font-bold text-white tracking-wide">USDT 交易量激增雷达 (Volume Surge Radar)</h2>
-          <span class="text-xs text-gray-400">捕捉量能暴增达 1.5x ~ 10x+ 的异常异动对</span>
+          <h2 class="text-base font-bold text-white tracking-wide">交易量激增雷达 (Volume Surge Radar)</h2>
+          <span class="text-xs text-gray-400">捕捉量能暴增达 1.5x ~ 10x+ 的异常放量资产</span>
         </div>
 
         <!-- 周期切换器 (15m, 1h, 4h) -->
@@ -1256,13 +1256,13 @@ function handleHtmlPage(request, env) {
         <!-- 标签页切换 -->
         <div class="flex items-center gap-2 flex-wrap">
           <button onclick="switchMarketTab('spot')" id="tabBtn-spot" class="px-4 py-1.5 rounded-lg text-xs font-bold transition bg-brand-yellow text-black">
-            现货看板 (USDT)
+            现货看板
           </button>
           <button onclick="switchMarketTab('alpha')" id="tabBtn-alpha" class="px-4 py-1.5 rounded-lg text-xs font-bold text-gray-400 hover:text-white transition">
             Alpha 链上看板 (Web3)
           </button>
           <button onclick="switchMarketTab('stocks')" id="tabBtn-stocks" class="px-4 py-1.5 rounded-lg text-xs font-bold text-gray-400 hover:text-white transition">
-            bStocks 美股 (USDT)
+            bStocks 美股
           </button>
         </div>
 
@@ -1284,9 +1284,9 @@ function handleHtmlPage(request, env) {
           <thead class="bg-[#12161C] text-gray-400 font-mono border-y border-brand-border select-none">
             <tr>
               <th class="py-3 px-3"># 排名</th>
-              <th class="py-3 px-3">USDT 交易对 / 资产</th>
+              <th class="py-3 px-3">资产 / 代币</th>
               <th id="th-price" class="py-3 px-3 text-right cursor-pointer hover:text-brand-yellow transition" onclick="toggleSort('price')">
-                最新价格 (USDT) <span class="sort-icon">⇕</span>
+                最新价格 <span class="sort-icon">⇕</span>
               </th>
               <th id="th-priceChangePercent" class="py-3 px-3 text-right cursor-pointer hover:text-brand-yellow transition" onclick="toggleSort('priceChangePercent')">
                 24h 涨跌幅 <span class="sort-icon">⇕</span>
@@ -1301,7 +1301,7 @@ function handleHtmlPage(request, env) {
                 4h 成交量 <span class="sort-icon">⇕</span>
               </th>
               <th id="th-volume24h" class="py-3 px-3 text-right cursor-pointer hover:text-brand-yellow transition" onclick="toggleSort('volume24h')">
-                24h 成交额 (USDT) <span class="sort-icon">⇕</span>
+                24h 成交额 <span class="sort-icon">⇕</span>
               </th>
               <th id="th-marketCap" class="py-3 px-3 text-right cursor-pointer hover:text-brand-yellow transition" onclick="toggleSort('marketCap')">
                 市值 (USD) <span class="sort-icon">⇕</span>
@@ -1554,6 +1554,8 @@ function handleHtmlPage(request, env) {
                            item.category === 'alpha' ? 'bg-purple-900/60 text-purple-300 border-purple-700' :
                            'bg-amber-900/60 text-amber-300 border-amber-700';
         const categoryLabel = item.category === 'spot' ? '现货' : item.category === 'alpha' ? 'Alpha' : 'bStocks';
+        const cleanSymbol = (item.symbol || '').replace(/(\/USDT|USDT)$/i, '');
+        const cleanName = (item.zhName || item.name || '').replace(/(\/USDT|USDT)/gi, '').trim();
 
         return \`
           <div class="bg-[#12161C] border border-brand-border rounded-xl p-3.5 hover:border-brand-yellow/60 transition group">
@@ -1564,10 +1566,10 @@ function handleHtmlPage(request, env) {
                 </span>
                 <div>
                   <div class="flex items-center gap-1.5 flex-wrap">
-                    <span class="font-bold text-sm text-white group-hover:text-brand-yellow transition">\${item.symbol}</span>
+                    <span class="font-bold text-sm text-white group-hover:text-brand-yellow transition">\${cleanSymbol}</span>
                     <span class="text-[11px] text-amber-400 font-mono font-bold" title="\${item.starTitle || ''}">\${item.starDisplay || '⭐'}</span>
                   </div>
-                  <span class="text-[10px] text-gray-400 block font-sans truncate max-w-[140px]">\${item.zhName || item.name || ''} · \${item.starDuration || '15m'}放量</span>
+                  <span class="text-[10px] text-gray-400 block font-sans truncate max-w-[140px]">\${cleanName} · \${item.starDuration || '15m'}放量</span>
                 </div>
                 <span class="text-[10px] px-1.5 py-0.2 rounded border \${badgeColor}">\${categoryLabel}</span>
               </div>
@@ -1579,7 +1581,7 @@ function handleHtmlPage(request, env) {
 
             <div class="grid grid-cols-2 gap-2 text-xs font-mono mt-3 pt-2.5 border-t border-brand-border/60">
               <div>
-                <div class="text-gray-500 text-[10px]">最新价 (USDT)</div>
+                <div class="text-gray-500 text-[10px]">最新价格</div>
                 <div class="text-white font-semibold">\${formatPrice(item.price)}</div>
               </div>
               <div class="text-right">
@@ -1672,6 +1674,9 @@ function handleHtmlPage(request, env) {
         const isUp = (item.priceChangePercent || 0) >= 0;
         const colorClass = isUp ? 'text-brand-accent' : 'text-brand-danger';
         const chainBadge = item.chainName || (item.category === 'spot' ? 'BINANCE' : 'bStocks');
+        const cleanSymbol = (item.symbol || '').replace(/(\/USDT|USDT)$/i, '');
+        let cleanName = item.zhName || item.ticker || item.name || '';
+        cleanName = cleanName.replace(/(\/USDT|USDT)/gi, '').trim();
 
         return \`
           <tr class="hover:bg-brand-hover/70 transition border-b border-brand-border/30" id="row-\${item.symbol}">
@@ -1681,11 +1686,11 @@ function handleHtmlPage(request, env) {
                 \${item.icon ? \`<img src="\${item.icon}" class="w-5 h-5 rounded-full object-cover bg-gray-800" onerror="this.style.display='none'" />\` : ''}
                 <div>
                   <div class="flex items-center gap-1.5 flex-wrap">
-                    <span class="font-bold text-white hover:text-brand-yellow transition cursor-pointer">\${item.symbol}</span>
+                    <span class="font-bold text-white hover:text-brand-yellow transition cursor-pointer">\${cleanSymbol}</span>
                     \${item.stars ? \`<span class="text-[10px] px-1 py-0.2 rounded bg-amber-950/80 text-amber-400 border border-amber-800/60 font-mono" title="\${item.starTitle || ''}">\${item.starDisplay}</span>\` : ''}
                   </div>
                   <span class="text-[11px] text-gray-400 block font-sans truncate max-w-[240px]">
-                    \${item.zhName || item.ticker || item.name || ''}
+                    \${cleanName}
                   </span>
                 </div>
               </div>
