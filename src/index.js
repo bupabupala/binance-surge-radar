@@ -5,7 +5,7 @@
 
 import { KV_KEYS } from './config/constants.js';
 import { jsonResponse, getKVBinding } from './utils/response.js';
-import { checkAuth, handleLoginAction, handleLogout, getAuthConfig, savePasswordConfig, isInitialized, handleSetupAction } from './services/auth.js';
+import { checkAuth, handleLoginAction, handleLogout, getAuthConfig, savePasswordConfig } from './services/auth.js';
 import { getOrFetchDashboard, aggregateAllData } from './services/binance.js';
 import { getWatchlist, saveWatchlist } from './services/quant.js';
 import { getBotConfig, saveBotConfig, sendTestNotification, processScheduledAlerts } from './services/notifier.js';
@@ -42,7 +42,6 @@ export default {
         server.accept();
 
         try {
-          // Cloudflare 海外边缘光纤直连币安官方 WebSocket 广播流
           const binanceWs = new WebSocket('wss://stream.binance.com:9443/ws/!ticker@arr');
 
           binanceWs.addEventListener('message', event => {
@@ -72,19 +71,11 @@ export default {
         });
       }
 
-      // 首次初始化接口 (/api/setup)
-      if (path === '/api/setup') {
-        if (request.method === 'POST') {
-          return handleSetupAction(request, env);
-        }
-        return renderNginxPage();
-      }
-
       const authCfg = await getAuthConfig(env);
       const loginPath = authCfg.loginPath || '/login';
       const adminPath = authCfg.adminPath || '/admin';
 
-      // 动态私密登录入口
+      // 2. 动态私密登录入口
       if (path === loginPath || path === '/login') {
         if (path === '/login' && loginPath !== '/login') {
           return renderNginxPage();
@@ -93,17 +84,15 @@ export default {
         if (request.method === 'POST') {
           return handleLoginAction(request, env);
         }
-
-        const initialized = await isInitialized(env);
-        return renderLoginPage(!initialized);
+        return renderLoginPage();
       } else if (path === '/logout') {
         return handleLogout(request, env);
       }
 
-      // 身份鉴权校验
+      // 3. 身份鉴权校验
       const authRole = await checkAuth(request, env);
 
-      // 动态私密管理中枢
+      // 4. 动态私密管理中枢
       if (path === adminPath || path === '/admin') {
         if (path === '/admin' && adminPath !== '/admin') {
           return renderNginxPage();
@@ -115,7 +104,7 @@ export default {
         return renderAdminPage();
       }
 
-      // 管理员专属 API (/api/admin/*)
+      // 5. 管理员专属 API (/api/admin/*)
       if (path.startsWith('/api/admin/')) {
         if (authRole !== 'admin') {
           return jsonResponse({ code: 401, message: '未授权或无管理员权限' }, 401);
@@ -177,7 +166,7 @@ export default {
         }
       }
 
-      // 根路径 (/)：未登录返回 Nginx 伪装；已登录展示雷达大盘
+      // 6. 根路径 (/)：未登录返回 Nginx 伪装；已登录展示雷达大盘
       if (path === '/' || path === '/index.html') {
         if (!authRole) {
           return renderNginxPage(); // 🛡️ Nginx 深度伪装
@@ -185,7 +174,7 @@ export default {
         return renderDashboardPage(authRole, adminPath);
       }
 
-      // 行情公共数据 API
+      // 7. 行情公共数据 API
       if (path === '/api/dashboard') {
         if (!authRole) return jsonResponse({ code: 401, message: '请先登录' }, 401);
         const data = await getOrFetchDashboard(env);
@@ -256,7 +245,7 @@ export default {
         });
       }
 
-      // 未匹配路由默认返回 Nginx 伪装，不暴露 404
+      // 未匹配路由默认返回 Nginx 伪装
       return renderNginxPage();
     } catch (err) {
       return jsonResponse({ code: 500, message: err.message }, 500);
