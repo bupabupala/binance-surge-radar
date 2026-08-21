@@ -159,9 +159,10 @@ export async function fetchAlphaTokens(env = null) {
       price,
       priceChangePercent,
       volume24h,
-      volume15m: volume24h / 96,
-      volume1h: volume24h / 24,
-      volume4h: volume24h / 6,
+      volume5m: parseFloat(token.volume5m) || 0,
+      volume15m: (parseFloat(token.volume5m) || 0) > 0 ? (parseFloat(token.volume5m) * 3) : (volume24h / 96),
+      volume1h: parseFloat(token.volume1h) || (volume24h / 24),
+      volume4h: parseFloat(token.volume4h) || (volume24h / 6),
       marketCap,
       category: 'alpha',
       icon: token.icon || token.logoUrl || ''
@@ -332,10 +333,16 @@ export async function fetchAnnouncements() {
   };
 }
 
+const STABLE_AND_MEGA_COINS = new Set([
+  'USDT', 'USDC', 'FDUSD', 'TUSD', 'BUSD', 'USDP', 'DAI', 'EUR', 'AEUR', 'USTC', 'WBTC', 'WETH',
+  'BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'DOGE', 'ADA', 'TRX', 'LINK', 'AVAX', 'SUI', 'DOT',
+  'NEAR', 'LTC', 'BCH', 'ETC', 'UNI', 'SHIB', 'PEPE', 'XLM', 'ATOM', 'FIL', 'APT', 'ICP'
+]);
+
 export function calculateVolumeSurge(spotList, alphaList, stocksList, window = '15m') {
   const combined = [
-    ...(spotList || []).map(item => ({ ...item, category: 'spot' })),
     ...(alphaList || []).map(item => ({ ...item, category: 'alpha' })),
+    ...(spotList || []).map(item => ({ ...item, category: 'spot' })),
     ...(stocksList || []).map(item => ({ ...item, category: 'stocks' }))
   ];
 
@@ -343,42 +350,53 @@ export function calculateVolumeSurge(spotList, alphaList, stocksList, window = '
     const cap = Number(item.marketCap) || 0;
     const vol = Number(item.volume24h) || 0;
     const price = Number(item.price) || 0;
-    const sym = (item.ticker || item.symbol || '').toUpperCase();
-    const isMega = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'DOGE', 'ADA'].includes(sym);
-    return cap < 100000000 && vol > 10000 && price > 0 && !isMega;
+    const sym = (item.ticker || item.symbol || '').replace(/(\/USDT|USDT)$/i, '').toUpperCase();
+    return cap > 0 && cap < 100000000 && vol > 10000 && price > 0 && !STABLE_AND_MEGA_COINS.has(sym);
   });
 
-  const scored = filtered.map(item => {
-    let windowVol = item.volume15m || (item.volume24h / 96);
-    let expectedVol = (item.volume24h || 1) / 96;
-    let chg = item.priceChangePercent / 6;
+  const scored = [];
 
-    if (window === '1h') {
-      windowVol = item.volume1h || (item.volume24h / 24);
-      expectedVol = (item.volume24h || 1) / 24;
-      chg = item.priceChangePercent / 3;
+  for (const item of filtered) {
+    const vol24 = Number(item.volume24h) || 1;
+    const vol4h = Number(item.volume4h) || 0;
+    const vol1h = Number(item.volume1h) || 0;
+    const vol5m = Number(item.volume5m) || 0;
+
+    let windowVol = 0;
+    let expectedVol = 1;
+    let chg = Number(item.priceChangePercent) || 0;
+
+    if (window === '15m') {
+      expectedVol = vol24 / 96;
+      windowVol = vol5m > 0 ? (vol5m * 3) : (vol1h > 0 ? (vol1h / 4) : expectedVol);
+      chg = chg / 6;
+    } else if (window === '1h') {
+      expectedVol = vol24 / 24;
+      windowVol = vol1h > 0 ? vol1h : expectedVol;
+      chg = chg / 3;
     } else if (window === '4h') {
-      windowVol = item.volume4h || (item.volume24h / 6);
-      expectedVol = (item.volume24h || 1) / 6;
-      chg = item.priceChangePercent / 1.5;
+      expectedVol = vol24 / 6;
+      windowVol = vol4h > 0 ? vol4h : expectedVol;
+      chg = chg / 1.5;
     }
 
     let surgeMultiplier = expectedVol > 0 ? (windowVol / expectedVol) : 1.0;
-    surgeMultiplier = Math.max(1.0, parseFloat(surgeMultiplier.toFixed(2)));
+    surgeMultiplier = parseFloat(surgeMultiplier.toFixed(2));
+
+    if (surgeMultiplier < 1.3) continue;
 
     let stars = 1;
     let starDisplay = '⭐';
-
     if (surgeMultiplier >= 10.0) {
       stars = 6;
       starDisplay = '⭐⭐⭐⭐⭐⭐';
-    } else if (surgeMultiplier >= 7.0) {
+    } else if (surgeMultiplier >= 6.0) {
       stars = 5;
       starDisplay = '⭐⭐⭐⭐⭐';
-    } else if (surgeMultiplier >= 4.5) {
+    } else if (surgeMultiplier >= 3.5) {
       stars = 4;
       starDisplay = '⭐⭐⭐⭐';
-    } else if (surgeMultiplier >= 2.5) {
+    } else if (surgeMultiplier >= 2.0) {
       stars = 3;
       starDisplay = '⭐⭐⭐';
     } else if (surgeMultiplier >= 1.5) {
@@ -386,7 +404,7 @@ export function calculateVolumeSurge(spotList, alphaList, stocksList, window = '
       starDisplay = '⭐⭐';
     }
 
-    return {
+    scored.push({
       symbol: item.symbol,
       rawSymbol: item.rawSymbol || item.symbol,
       ticker: item.ticker || item.symbol,
@@ -400,10 +418,10 @@ export function calculateVolumeSurge(spotList, alphaList, stocksList, window = '
       surgeMultiplier,
       stars,
       starDisplay,
-      marketCap: item.marketCap || (item.volume24h * 10),
+      marketCap: item.marketCap,
       icon: item.icon
-    };
-  });
+    });
+  }
 
   scored.sort((a, b) => b.surgeMultiplier - a.surgeMultiplier);
   return scored.slice(0, 16).map((item, index) => ({ ...item, rank: index + 1 }));
