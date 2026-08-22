@@ -543,22 +543,59 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     ? watchlist
     : ['SPCXB', 'SNDKB', 'TAO', 'AVAX', 'MAV', 'AIGENSYN', 'ASTER', 'TRUMP', 'GOOGLB', 'TSLAB', 'SKHYB'];
 
-  const [stocksDict, ...spotResults] = await Promise.all([
-    fetchPulseStocks(),
-    ...targetList.map(sym => fetchTokenTicker(sym))
-  ]);
-
   const spotDict = {};
   (freshData?.spot || []).forEach(item => {
     if (item.symbol) spotDict[item.symbol.toUpperCase()] = item;
     if (item.ticker) spotDict[item.ticker.toUpperCase()] = item;
   });
-  spotResults.forEach(item => {
-    if (item && item.ticker) {
-      spotDict[item.ticker.toUpperCase()] = item;
-      spotDict[item.symbol.toUpperCase()] = item;
+
+  // 🚀 1. 批量单次请求拉取所有自选标的 (极速 1 次 HTTP，绝不超限)
+  try {
+    const symbols = targetList.map(s => {
+      const clean = String(s).trim().toUpperCase().replace(/[\/\-_]/g, '').replace(/USDT$/i, '');
+      return `"${clean}USDT"`;
+    }).join(',');
+    const url = `https://data-api.binance.vision/api/v3/ticker/24hr?symbols=[${encodeURIComponent(symbols)}]`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': COMMON_HEADERS['User-Agent'],
+        'Accept': 'application/json'
+      }
+    });
+    if (res.ok) {
+      const list = await res.json();
+      if (Array.isArray(list)) {
+        list.forEach(d => {
+          const sym = (d.symbol || '').replace(/USDT$/i, '');
+          spotDict[sym.toUpperCase()] = {
+            symbol: d.symbol,
+            ticker: sym,
+            price: parseFloat(d.lastPrice) || 0,
+            priceChangePercent: parseFloat(d.priceChangePercent) || 0
+          };
+          spotDict[d.symbol.toUpperCase()] = spotDict[sym.toUpperCase()];
+        });
+      }
     }
-  });
+  } catch (e) {}
+
+  // 🚀 2. 对未命中的个别标的进行单点兜底重试
+  const fallbackTasks = targetList
+    .filter(sym => {
+      const clean = String(sym).trim().toUpperCase().replace(/[\/\-_]/g, '').replace(/USDT$/i, '');
+      return !spotDict[clean] || !(spotDict[clean].price > 0);
+    })
+    .map(async sym => {
+      const res = await fetchTokenTicker(sym);
+      if (res && res.ticker) {
+        spotDict[res.ticker.toUpperCase()] = res;
+        spotDict[res.symbol.toUpperCase()] = res;
+      }
+    });
+
+  if (fallbackTasks.length > 0) {
+    await Promise.allSettled(fallbackTasks);
+  }
 
   const htmlRows = [];
   const mdRows = [];
@@ -568,12 +605,7 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     const upper = rawTarget.toUpperCase().replace(/[\/\-_]/g, '');
     const cleanSym = upper.replace(/USDT$/i, '');
 
-    let token = null;
-    if (upper === 'SPACEX' || upper === 'SPACEXB' || upper === 'SPCX') {
-      token = stocksDict['SPCXB'] || stocksDict['SPCX'];
-    } else {
-      token = stocksDict[upper] || spotDict[cleanSym] || spotDict[upper];
-    }
+    const token = spotDict[cleanSym] || spotDict[upper] || spotDict[upper + 'USDT'];
 
     if (token && Number(token.price) > 0) {
       const chg = Number(token.priceChangePercent) || 0;
