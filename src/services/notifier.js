@@ -549,35 +549,43 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     if (item.ticker) spotDict[item.ticker.toUpperCase()] = item;
   });
 
-  // 🚀 1. 批量单次请求拉取所有自选标的 (极速 1 次 HTTP，绝不超限)
-  try {
-    const symbols = targetList.map(s => {
-      const clean = String(s).trim().toUpperCase().replace(/[\/\-_]/g, '').replace(/USDT$/i, '');
-      return `"${clean}USDT"`;
-    }).join(',');
-    const url = `https://data-api.binance.vision/api/v3/ticker/24hr?symbols=[${encodeURIComponent(symbols)}]`;
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': COMMON_HEADERS['User-Agent'],
-        'Accept': 'application/json'
+  // 🚀 1. 批量单次请求拉取所有自选标的 (严格 RFC-3986 编码 + 多镜像容灾)
+  const symArray = targetList.map(s => String(s).trim().toUpperCase().replace(/[\/\-_]/g, '').replace(/USDT$/i, '') + 'USDT');
+  const encodedParam = encodeURIComponent(JSON.stringify(symArray));
+
+  const batchMirrors = [
+    `https://data-api.binance.vision/api/v3/ticker/24hr?symbols=${encodedParam}`,
+    `https://api.binance.com/api/v3/ticker/24hr?symbols=${encodedParam}`,
+    `https://api1.binance.com/api/v3/ticker/24hr?symbols=${encodedParam}`,
+    `https://api2.binance.com/api/v3/ticker/24hr?symbols=${encodedParam}`
+  ];
+
+  for (const url of batchMirrors) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': COMMON_HEADERS['User-Agent'],
+          'Accept': 'application/json'
+        }
+      });
+      if (res.ok) {
+        const list = await res.json();
+        if (Array.isArray(list) && list.length > 0) {
+          list.forEach(d => {
+            const sym = (d.symbol || '').replace(/USDT$/i, '');
+            spotDict[sym.toUpperCase()] = {
+              symbol: d.symbol,
+              ticker: sym,
+              price: parseFloat(d.lastPrice) || 0,
+              priceChangePercent: parseFloat(d.priceChangePercent) || 0
+            };
+            spotDict[d.symbol.toUpperCase()] = spotDict[sym.toUpperCase()];
+          });
+          break;
+        }
       }
-    });
-    if (res.ok) {
-      const list = await res.json();
-      if (Array.isArray(list)) {
-        list.forEach(d => {
-          const sym = (d.symbol || '').replace(/USDT$/i, '');
-          spotDict[sym.toUpperCase()] = {
-            symbol: d.symbol,
-            ticker: sym,
-            price: parseFloat(d.lastPrice) || 0,
-            priceChangePercent: parseFloat(d.priceChangePercent) || 0
-          };
-          spotDict[d.symbol.toUpperCase()] = spotDict[sym.toUpperCase()];
-        });
-      }
-    }
-  } catch (e) {}
+    } catch (e) {}
+  }
 
   // 🚀 2. 对未命中的个别标的进行单点兜底重试
   const fallbackTasks = targetList
