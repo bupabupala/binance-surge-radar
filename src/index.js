@@ -204,7 +204,13 @@ export default {
                 sendResults
               });
             } else {
-              return jsonResponse({ success: false, message: '未能拉取到自选标的行情，推送已取消' }, 400);
+              return jsonResponse({
+                success: false,
+                message: '未能拉取到自选标的行情，推送已取消',
+                debugLogs: report.debugLogs || [],
+                watchlist,
+                spotDictKeys: Object.keys(report.spotDict || {})
+              }, 400);
             }
           }
         }

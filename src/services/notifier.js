@@ -560,6 +560,8 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     `https://api2.binance.com/api/v3/ticker/24hr?symbols=${encodedParam}`
   ];
 
+  const debugLogs = [];
+
   for (const url of batchMirrors) {
     try {
       const res = await fetch(url, {
@@ -568,8 +570,10 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
           'Accept': 'application/json'
         }
       });
+      debugLogs.push({ url: url.slice(0, 45), status: res.status });
       if (res.ok) {
         const list = await res.json();
+        debugLogs.push({ listLength: Array.isArray(list) ? list.length : 'not_array' });
         if (Array.isArray(list) && list.length > 0) {
           list.forEach(d => {
             const sym = (d.symbol || '').replace(/USDT$/i, '');
@@ -584,7 +588,9 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
           break;
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      debugLogs.push({ url: url.slice(0, 45), error: e.message });
+    }
   }
 
   // 🚀 2. 对未命中的个别标的进行单点兜底重试
@@ -629,7 +635,7 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
 
   // 🛡️ 铁律：只要有效条数为 0，直接返回 count: 0，绝不组装空消息！
   if (htmlRows.length === 0) {
-    return { count: 0, title: '', textHtml: '', textMd: '' };
+    return { count: 0, title: '', textHtml: '', textMd: '', debugLogs, spotDict };
   }
 
   const title = isBoot ? '🚀 币安 USDT 异动雷达 · 部署上线成功' : '📊 币安 USDT 异动雷达 · 自选资产实时行情';
@@ -648,7 +654,7 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     `- **监控状态**：全天候 7×24h 极速微巡检已就绪 (~12秒/轮)\n` +
     `- **报告时间**：${nowStr}`;
 
-  return { title, textHtml, textMd, count: htmlRows.length };
+  return { title, textHtml, textMd, count: htmlRows.length, debugLogs, spotDict };
 }
 
 export async function sendTestNotification(botConfig, env = null, freshData = null) {
