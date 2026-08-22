@@ -480,44 +480,68 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     if (item.ticker) stocksDict[item.ticker.toUpperCase()] = item;
   });
 
-  const alphaDict = {};
-  (freshData?.alpha || []).forEach(item => {
-    if (item.symbol) alphaDict[item.symbol.toUpperCase()] = item;
-    if (item.ticker) alphaDict[item.ticker.toUpperCase()] = item;
-    if (item.contractAddress) alphaDict[item.contractAddress.toLowerCase()] = item;
-  });
-
   const targetList = Array.isArray(watchlist) && watchlist.length > 0
     ? watchlist
     : ['BTC', 'ETH', 'SOL', 'SPCXB', 'SNDKB', 'NVDAB'];
 
-  // 🚀 1. 检查是否存在缺失标的（如冷启动大盘尚未完全初始化）
-  const hasMissing = targetList.some(sym => {
+  // 🚀 1. 并发定向直拉币安官方 Vision 镜像，确保全部自选币种最新价格 100% 异步就绪
+  const directPromises = targetList.map(async sym => {
     const rawTarget = String(sym).trim();
     const upper = rawTarget.toUpperCase().replace(/[\/\-_]/g, '');
     const cleanSym = upper.replace(/USDT$/i, '');
-    return !spotDict[cleanSym + 'USDT'] && !spotDict[cleanSym] && !stocksDict[upper] && !stocksDict[upper + 'B'];
+    
+    // 美股标的 (SpaceX, SNDKB, NVDAB)
+    if (upper === 'SPACEX' || upper === 'SPACEXB' || upper === 'SPCXB' || upper === 'SNDKB' || upper === 'NVDAB') {
+      if (!stocksDict[upper] && !stocksDict['SPCXB']) {
+        try {
+          const res = await fetch('https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/pulse/unified/rank/list/ai?chainIds=56,CT_501,8453,1&rankType=40&page=1&size=50', {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Accept': 'application/json', 'lang': 'zh-CN' }
+          });
+          if (res.ok) {
+            const json = await res.json();
+            (json?.data?.tokens || []).forEach(t => {
+              const s = (t.symbol || '').toUpperCase();
+              stocksDict[s] = {
+                symbol: s,
+                ticker: s,
+                name: t.stockCompanyName || s,
+                zhName: t.stockCompanyNameZh || t.name || s,
+                price: parseFloat(t.price) || 0,
+                priceChangePercent: parseFloat(t.percentChange24h) || 0
+              };
+            });
+          }
+        } catch (e) {}
+      }
+      return;
+    }
+
+    // 现货 Vision 官方高速接口
+    if (!spotDict[cleanSym + 'USDT'] && !spotDict[cleanSym]) {
+      try {
+        const res = await fetch(`https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${cleanSym}USDT`, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Accept': 'application/json' }
+        });
+        if (res.ok) {
+          const d = await res.json();
+          if (d && d.symbol) {
+            spotDict[d.symbol] = {
+              symbol: d.symbol,
+              ticker: cleanSym,
+              name: cleanSym,
+              zhName: getChineseDisplayName(d.symbol, '', cleanSym),
+              price: parseFloat(d.lastPrice) || 0,
+              priceChangePercent: parseFloat(d.priceChangePercent) || 0
+            };
+          }
+        }
+      } catch (e) {}
+    }
   });
 
-  // 🚀 2. 若有缺失，仅需 1 次调用 fetchSpotTickers() 批量带回 670+ 代币，仅消耗 1 个子请求
-  if (hasMissing || Object.keys(spotDict).length === 0) {
-    try {
-      const { fetchSpotTickers, fetchStockTokens } = await import('./binance.js');
-      const [spotList, stocksList] = await Promise.all([
-        fetchSpotTickers(),
-        fetchStockTokens(null)
-      ]);
-      (spotList || []).forEach(item => {
-        if (item.symbol) spotDict[item.symbol.toUpperCase()] = item;
-        if (item.ticker) spotDict[item.ticker.toUpperCase()] = item;
-      });
-      (stocksList || []).forEach(item => {
-        if (item.symbol) stocksDict[item.symbol.toUpperCase()] = item;
-        if (item.ticker) stocksDict[item.ticker.toUpperCase()] = item;
-      });
-    } catch (e) {}
-  }
+  await Promise.allSettled(directPromises);
 
+  // 🚀 2. 组装行情列表
   const htmlRows = [];
   const mdRows = [];
 
@@ -526,57 +550,24 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     const upper = rawTarget.toUpperCase().replace(/[\/\-_]/g, '');
     const cleanSym = upper.replace(/USDT$/i, '');
 
-    let token = null;
-    if (upper === 'SPACEX' || upper === 'SPACEXB' || upper === 'SPCX') {
-      token = stocksDict['SPCXB'] || stocksDict['SPCX'] || spotDict['SPCXBUSDT'];
-    } else if (upper.endsWith('B') && (stocksDict[upper] || spotDict[upper + 'USDT'])) {
-      token = stocksDict[upper] || spotDict[upper + 'USDT'];
-    } else if (stocksDict[upper + 'B'] || spotDict[upper + 'BUSDT']) {
-      token = stocksDict[upper + 'B'] || spotDict[upper + 'BUSDT'];
-    } else if (spotDict[cleanSym + 'USDT']) {
-      token = spotDict[cleanSym + 'USDT'];
-    } else if (spotDict[upper]) {
-      token = spotDict[upper];
-    } else if (stocksDict[upper]) {
-      token = stocksDict[upper];
-    } else if (alphaDict[upper] || alphaDict[rawTarget.toLowerCase()]) {
-      token = alphaDict[upper] || alphaDict[rawTarget.toLowerCase()];
-    }
+    let token = stocksDict[upper] || stocksDict['SPCXB'] || spotDict[cleanSym + 'USDT'] || spotDict[cleanSym] || spotDict[upper];
+    if (upper === 'SPACEX' || upper === 'SPACEXB') token = stocksDict['SPCXB'] || stocksDict['SPCX'];
 
-    if (token) {
+    if (token && Number(token.price) > 0) {
       const chg = Number(token.priceChangePercent) || 0;
       const isUp = chg >= 0;
-      const displaySym = (token.symbol || '').replace(/(\/USDT|USDT)$/i, '');
+      const displaySym = (token.symbol || cleanSym).replace(/(\/USDT|USDT)$/i, '');
       const zhName = token.zhName || token.name || getChineseDisplayName(displaySym, '', displaySym);
-      const price = Number(token.price) || 0;
-      const surgeStr = (token.stars && token.stars >= 2) ? ` ⭐${token.stars}星` : '';
+      const price = Number(token.price);
 
-      htmlRows.push(`• <b>${displaySym}</b> (${zhName})：$${price.toLocaleString('en-US')} (<b>${isUp ? '+' : ''}${chg.toFixed(2)}%</b>)${surgeStr}`);
-      mdRows.push(`- **${displaySym}** (${zhName})：\`$${price.toLocaleString('en-US')}\` (${isUp ? '🟢 **+' : '🔴 **'}${chg.toFixed(2)}%**)${surgeStr}`);
+      htmlRows.push(`• <b>${displaySym}</b> (${zhName})：$${price.toLocaleString('en-US')} (<b>${isUp ? '+' : ''}${chg.toFixed(2)}%</b>)`);
+      mdRows.push(`- **${displaySym}** (${zhName})：\`$${price.toLocaleString('en-US')}\` (${isUp ? '🟢 **+' : '🔴 **'}${chg.toFixed(2)}%**)`);
     }
   }
 
+  // 🛡️ 铁律：只要有效条数为 0，直接返回 count: 0，绝不组装空消息！
   if (htmlRows.length === 0) {
-    const directPromises = targetList.map(async sym => {
-      const clean = sym.trim().toUpperCase().replace(/[\/\-_]/g, '').replace(/USDT$/i, '');
-      try {
-        const res = await fetch(`https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${clean}USDT`, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Accept': 'application/json' }
-        });
-        if (res.ok) {
-          const d = await res.json();
-          if (d && d.symbol) {
-            const price = parseFloat(d.lastPrice) || 0;
-            const chg = parseFloat(d.priceChangePercent) || 0;
-            const zhName = getChineseDisplayName(d.symbol, '', clean);
-            const isUp = chg >= 0;
-            htmlRows.push(`• <b>${clean}</b> (${zhName})：$${price.toLocaleString('en-US')} (<b>${isUp ? '+' : ''}${chg.toFixed(2)}%</b>)`);
-            mdRows.push(`- **${clean}** (${zhName})：\`$${price.toLocaleString('en-US')}\` (${isUp ? '🟢 **+' : '🔴 **'}${chg.toFixed(2)}%**)`);
-          }
-        }
-      } catch (e) {}
-    });
-    await Promise.allSettled(directPromises);
+    return { count: 0, title: '', textHtml: '', textMd: '' };
   }
 
   const title = isBoot ? '🚀 币安 USDT 异动雷达 · 部署上线成功' : '🔔 币安 USDT 异动雷达 · 自选资产快报';
@@ -584,13 +575,13 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
 
   const textHtml = `<b>${title}</b>\n\n` +
     `📊 <b>自选标的最新行情快报：</b>\n` +
-    (htmlRows.length > 0 ? htmlRows.join('\n') : '• 正在同步实时自选行情...') + `\n\n` +
+    htmlRows.join('\n') + `\n\n` +
     `• <b>监控状态</b>：全天候 7×24h 极速微巡检已就绪 (~12秒/轮)\n` +
     `• <b>报告时间</b>：${nowStr}`;
 
   const textMd = `### ${title}\n\n` +
     `> **📊 自选标的最新行情快报**\n\n` +
-    (mdRows.length > 0 ? mdRows.join('\n') : '- 正在同步实时自选行情...') + `\n\n` +
+    mdRows.join('\n') + `\n\n` +
     `---\n` +
     `- **监控状态**：全天候 7×24h 极速微巡检已就绪 (~12秒/轮)\n` +
     `- **报告时间**：${nowStr}`;
