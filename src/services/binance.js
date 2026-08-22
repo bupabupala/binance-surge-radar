@@ -125,13 +125,17 @@ export async function fetchAlphaTokens(env = null) {
     const tag = token.tokenTag || {};
     
     // 🛡️ 严格过滤所有美股代币，保证 Alpha 100% 纯正 Web3 链上代币
-    if (
+    const isStock = Boolean(
       token.stockCompanyName || 
       token.ondoStatusInfo || 
       tag['Tokenized Stocks Category'] || 
       tag['Tokenized Stocks Launch Platform'] ||
-      (sym.toUpperCase().endsWith('ON') && sym.length <= 8)
-    ) {
+      tag['Tokenized Stocks Trade Time'] ||
+      (sym.toUpperCase().endsWith('ON') && sym.length <= 8) ||
+      (sym.toUpperCase().endsWith('B') && (tag['Tokenized Stocks Launch Platform'] || token.stockCompanyName || token.ondoStatusInfo))
+    );
+
+    if (isStock) {
       continue;
     }
 
@@ -141,7 +145,7 @@ export async function fetchAlphaTokens(env = null) {
 
     const price = parseFloat(token.price) || parseFloat(token.lastPrice) || 0;
     const volume24h = parseFloat(token.volume24h) || parseFloat(token.volume) || 0;
-    const priceChangePercent = parseFloat(token.priceChange24h) || parseFloat(token.percentChange24h) || parseFloat(token.chg24h) || 0;
+    const priceChangePercent = parseFloat(token.percentChange24h) || parseFloat(token.priceChangePercent) || 0;
     const marketCap = parseFloat(token.marketCap) || parseFloat(token.fdv) || (volume24h * 8);
 
     list.push({
@@ -219,7 +223,7 @@ export async function fetchStockTokens(env = null) {
     }
 
     let standardSym = rawSym;
-    if (!standardSym.toUpperCase().endsWith('B') && !standardSym.toUpperCase().endsWith('B')) {
+    if (!standardSym.toUpperCase().endsWith('B')) {
       standardSym = standardSym + 'B';
     }
 
@@ -229,7 +233,7 @@ export async function fetchStockTokens(env = null) {
 
     const price = parseFloat(token.price) || parseFloat(token.lastPrice) || 0;
     const volume24h = parseFloat(token.volume24h) || parseFloat(token.volume) || 0;
-    const priceChangePercent = parseFloat(token.priceChange24h) || parseFloat(token.percentChange24h) || 0;
+    const priceChangePercent = parseFloat(token.percentChange24h) || parseFloat(token.priceChangePercent) || (price > 0 && token.priceChange24h ? (parseFloat(token.priceChange24h) / (price - parseFloat(token.priceChange24h)) * 100) : 0);
     const marketCap = parseFloat(token.marketCap) || (price > 0 ? price * 10000000 : 50000000);
     const zhName = token.stockCompanyNameZh || token.stockCompanyName || getChineseDisplayName(ticker, token.name, ticker);
 
