@@ -167,7 +167,7 @@ import { KV_KEYS, COMMON_HEADERS } from '../config/constants.js';
 import { getKVBinding } from '../utils/response.js';
 import { getWatchlist, inspectWatchlistSignals } from './quant.js';
 import { getChineseDisplayName } from '../config/dict.js';
-import { fetchSpotTickers, fetchStockTokens } from './binance.js';
+import { getOrFetchDashboard, fetchSpotTickers, fetchStockTokens } from './binance.js';
 
 let gInMemoryBotConfig = null;
 
@@ -540,24 +540,19 @@ async function fetchPulseStocks() {
 }
 
 export async function generateWatchlistSnapshotReport(freshData, watchlist = [], isBoot = false, env = null) {
-  let spot = freshData?.spot;
-  let stocks = freshData?.stocks;
-
-  if (!Array.isArray(spot) || spot.length === 0) {
-    spot = await fetchSpotTickers();
-  }
-  if (!Array.isArray(stocks) || stocks.length === 0) {
-    stocks = await fetchStockTokens(env);
+  let data = freshData;
+  if (!data || !Array.isArray(data.spot) || data.spot.length === 0) {
+    data = await getOrFetchDashboard(env).catch(() => null);
   }
 
   const spotDict = {};
-  (spot || []).forEach(item => {
+  (data?.spot || []).forEach(item => {
     if (item.symbol) spotDict[item.symbol.toUpperCase()] = item;
     if (item.ticker) spotDict[item.ticker.toUpperCase()] = item;
   });
 
   const stocksDict = {};
-  (stocks || []).forEach(item => {
+  (data?.stocks || []).forEach(item => {
     if (item.symbol) stocksDict[item.symbol.toUpperCase()] = item;
     if (item.ticker) stocksDict[item.ticker.toUpperCase()] = item;
   });
