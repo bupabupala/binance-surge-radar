@@ -467,85 +467,89 @@ export async function sendUnifiedBroadcast(botConfig, title, textHtml, textMarkd
   return Promise.all(promises);
 }
 
+async function fetchTokenTicker(symbol) {
+  const clean = String(symbol).trim().toUpperCase().replace(/[\/\-_]/g, '').replace(/USDT$/i, '');
+  const urls = [
+    `https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${clean}USDT`,
+    `https://api.binance.com/api/v3/ticker/24hr?symbol=${clean}USDT`,
+    `https://api1.binance.com/api/v3/ticker/24hr?symbol=${clean}USDT`,
+    `https://api2.binance.com/api/v3/ticker/24hr?symbol=${clean}USDT`
+  ];
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+      if (res.ok) {
+        const d = await res.json();
+        if (d && d.symbol) {
+          return {
+            symbol: d.symbol,
+            ticker: clean,
+            name: clean,
+            zhName: getChineseDisplayName(d.symbol, '', clean),
+            price: parseFloat(d.lastPrice) || 0,
+            priceChangePercent: parseFloat(d.priceChangePercent) || 0
+          };
+        }
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
+async function fetchPulseStocks() {
+  const urls = [
+    'https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/pulse/unified/rank/list/ai?chainIds=56,CT_501,8453,1&rankType=40&page=1&size=100',
+    'https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/rwa/stock/detail/list/ai'
+  ];
+  const dict = {};
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, {
+        headers: { 'Accept': 'application/json', 'clienttype': 'web', 'lang': 'zh-CN' }
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const list = json?.data?.tokens || json?.data || [];
+        (list || []).forEach(t => {
+          const sym = (t.symbol || '').toUpperCase();
+          dict[sym] = {
+            symbol: sym,
+            ticker: sym,
+            name: t.stockCompanyName || sym,
+            zhName: t.stockCompanyNameZh || t.name || sym,
+            price: parseFloat(t.price) || 0,
+            priceChangePercent: parseFloat(t.percentChange24h) || parseFloat(t.priceChangePercent) || 0
+          };
+        });
+        if (Object.keys(dict).length > 0) break;
+      }
+    } catch (e) {}
+  }
+  return dict;
+}
+
 export async function generateWatchlistSnapshotReport(freshData, watchlist = [], isBoot = false) {
+  const targetList = Array.isArray(watchlist) && watchlist.length > 0
+    ? watchlist
+    : ['SPCXB', 'SNDKB', 'TAO', 'AVAX', 'MAV', 'AIGENSYN', 'ASTER', 'TRUMP', 'GOOGLB', 'TSLAB', 'SKHYB'];
+
+  const [stocksDict, ...spotResults] = await Promise.all([
+    fetchPulseStocks(),
+    ...targetList.map(sym => fetchTokenTicker(sym))
+  ]);
+
   const spotDict = {};
   (freshData?.spot || []).forEach(item => {
     if (item.symbol) spotDict[item.symbol.toUpperCase()] = item;
     if (item.ticker) spotDict[item.ticker.toUpperCase()] = item;
   });
-
-  const stocksDict = {};
-  (freshData?.stocks || []).forEach(item => {
-    if (item.symbol) stocksDict[item.symbol.toUpperCase()] = item;
-    if (item.ticker) stocksDict[item.ticker.toUpperCase()] = item;
-  });
-
-  const targetList = Array.isArray(watchlist) && watchlist.length > 0
-    ? watchlist
-    : ['SPCXB', 'SNDKB', 'TAO', 'AVAX', 'MAV', 'AIGENSYN', 'ASTER', 'TRUMP', 'GOOGLB', 'TSLAB', 'SKHYB'];
-
-  // 🚀 1. 检查是否需要拉取 Pulse 动态美股标的
-  const hasStocks = targetList.some(s => {
-    const u = String(s).toUpperCase();
-    return u.endsWith('B') || u.endsWith('ON') || u === 'SPACEX' || u === 'SPACEXB';
-  });
-
-  const fetchTasks = [];
-
-  if (hasStocks && Object.keys(stocksDict).length === 0) {
-    fetchTasks.push((async () => {
-      try {
-        const pulseRes = await fetch('https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/pulse/unified/rank/list/ai?chainIds=56,CT_501,8453,1&rankType=40&page=1&size=100', {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Accept': 'application/json', 'lang': 'zh-CN' }
-        });
-        if (pulseRes.ok) {
-          const pulseJson = await pulseRes.json();
-          (pulseJson?.data?.tokens || []).forEach(t => {
-            const sym = (t.symbol || '').toUpperCase();
-            stocksDict[sym] = {
-              symbol: sym,
-              ticker: sym,
-              name: t.stockCompanyName || sym,
-              zhName: t.stockCompanyNameZh || t.name || sym,
-              price: parseFloat(t.price) || 0,
-              priceChangePercent: parseFloat(t.percentChange24h) || 0
-            };
-          });
-        }
-      } catch (e) {}
-    })());
-  }
-
-  // 🚀 2. 并发拉取现货最新行情
-  targetList.forEach(sym => {
-    const clean = String(sym).trim().toUpperCase().replace(/[\/\-_]/g, '').replace(/USDT$/i, '');
-    if (!spotDict[clean + 'USDT'] && !spotDict[clean] && !clean.endsWith('B')) {
-      fetchTasks.push((async () => {
-        try {
-          const res = await fetch(`https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${clean}USDT`, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Accept': 'application/json' }
-          });
-          if (res.ok) {
-            const d = await res.json();
-            if (d && d.symbol) {
-              spotDict[clean] = {
-                symbol: d.symbol,
-                ticker: clean,
-                name: clean,
-                zhName: getChineseDisplayName(d.symbol, '', clean),
-                price: parseFloat(d.lastPrice) || 0,
-                priceChangePercent: parseFloat(d.priceChangePercent) || 0
-              };
-            }
-          }
-        } catch (e) {}
-      })());
+  spotResults.forEach(item => {
+    if (item && item.ticker) {
+      spotDict[item.ticker.toUpperCase()] = item;
+      spotDict[item.symbol.toUpperCase()] = item;
     }
   });
 
-  await Promise.allSettled(fetchTasks);
-
-  // 🚀 3. 组装行情列表
   const htmlRows = [];
   const mdRows = [];
 
