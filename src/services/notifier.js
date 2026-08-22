@@ -722,57 +722,6 @@ export async function detectSymbolChangesAndNotify(env, botConfig, currentActive
   } catch (e) {}
 }
 
-let gCachedAnnounceIds = null;
-
-// 🎯 币安官方新公告差分监听
-export async function detectNewAnnouncementsAndNotify(env, botConfig, announcements) {
-  const kv = getKVBinding(env);
-  if (!Array.isArray(announcements) || announcements.length === 0) return;
-
-  try {
-    if (!gCachedAnnounceIds) {
-      let rawPrev = null;
-      if (kv) {
-        rawPrev = await kv.get('bian:seen_announcements:v2');
-      }
-      gCachedAnnounceIds = new Set(rawPrev ? JSON.parse(rawPrev) : []);
-
-      if (gCachedAnnounceIds.size === 0) {
-        gCachedAnnounceIds = new Set(announcements.map(a => String(a.id || a.code || a.title)));
-        if (kv) {
-          await kv.put('bian:seen_announcements:v2', JSON.stringify([...gCachedAnnounceIds]), { expirationTtl: 86400 * 14 });
-        }
-        return;
-      }
-    }
-
-    const prevIds = gCachedAnnounceIds;
-    const newItems = announcements.filter(a => !prevIds.has(String(a.id || a.code || a.title)));
-
-    if (newItems.length > 0 && prevIds.size > 0) {
-      for (const item of newItems) {
-        const title = `📢 币安官方最新公告：${item.title || ''}`;
-        const textHtml = `<b>📢 币安官方最新公告</b>\n\n` +
-          `• 公告标题：<b>${item.title || ''}</b>\n` +
-          `• 发布时间：${item.releaseDate ? new Date(item.releaseDate).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '刚刚'}\n` +
-          `• 官方链接：<a href="${item.url || 'https://www.binance.com/zh-CN/support/announcement'}">点击查看官方公告详情</a>`;
-
-        const textMd = `### 📢 币安官方最新公告\n\n` +
-          `> **${item.title || ''}**\n\n` +
-          `- **发布时间**：${item.releaseDate ? new Date(item.releaseDate).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '刚刚'}\n` +
-          `- **官方详情**：[点击查看官方公告](${item.url || 'https://www.binance.com/zh-CN/support/announcement'})`;
-
-        await sendUnifiedBroadcast(botConfig, title, textHtml, textMd);
-        gCachedAnnounceIds.add(String(item.id || item.code || item.title));
-      }
-
-      if (kv) {
-        await kv.put('bian:seen_announcements:v2', JSON.stringify([...gCachedAnnounceIds]), { expirationTtl: 86400 * 14 });
-      }
-    }
-  } catch (e) {}
-}
-
 let gAlertHistory = {};
 let gHasSentBootReport = false;
 let gLastSnapshotPushTime = 0;
