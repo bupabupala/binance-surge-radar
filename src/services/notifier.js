@@ -569,7 +569,7 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
       const price = Number(token.price);
 
       htmlRows.push(`• <b>${displaySym}</b> (${zhName})：$${price.toLocaleString('en-US')} (<b>${isUp ? '+' : ''}${chg.toFixed(2)}%</b>)`);
-      mdRows.push(`- **${displaySym}</b> (${zhName})：\`$${price.toLocaleString('en-US')}\` (${isUp ? '🟢 **+' : '🔴 **'}${chg.toFixed(2)}%**)`);
+      mdRows.push(`- **${displaySym}** (${zhName})：\`$${price.toLocaleString('en-US')}\` (${isUp ? '🟢 **+' : '🔴 **'}${chg.toFixed(2)}%**)`);
     }
   }
 
