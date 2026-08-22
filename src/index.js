@@ -206,7 +206,9 @@ export default {
             } else {
               return jsonResponse({
                 success: false,
-                message: '未能拉取到自选标的行情，推送已取消'
+                message: '未能拉取到自选标的行情，推送已取消',
+                debug: report.debugErrors || [],
+                watchlist
               }, 400);
             }
           }

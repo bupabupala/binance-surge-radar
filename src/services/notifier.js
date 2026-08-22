@@ -550,43 +550,40 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     if (item.ticker) spotDict[item.ticker.toUpperCase()] = item;
   });
 
+  const debugErrors = [];
+
   const tasks = targetList.map(async sym => {
     const clean = String(sym).trim().toUpperCase().replace(/[\/\-_]/g, '').replace(/USDT$/i, '');
     if (spotDict[clean] && spotDict[clean].price > 0) return spotDict[clean];
 
-    const mirrors = [
-      `https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${clean}USDT`,
-      `https://api.binance.com/api/v3/ticker/24hr?symbol=${clean}USDT`,
-      `https://api1.binance.com/api/v3/ticker/24hr?symbol=${clean}USDT`,
-      `https://api2.binance.com/api/v3/ticker/24hr?symbol=${clean}USDT`,
-      `https://api3.binance.com/api/v3/ticker/24hr?symbol=${clean}USDT`
-    ];
-
-    for (const url of mirrors) {
-      try {
-        const res = await fetch(url, {
-          headers: {
-            'User-Agent': COMMON_HEADERS['User-Agent'],
-            'Accept': 'application/json'
-          }
-        });
-        if (res.ok) {
-          const d = await res.json();
-          if (d && d.symbol) {
-            const item = {
-              symbol: d.symbol,
-              ticker: clean,
-              name: clean,
-              zhName: getChineseDisplayName(d.symbol, '', clean),
-              price: parseFloat(d.lastPrice) || 0,
-              priceChangePercent: parseFloat(d.priceChangePercent) || 0
-            };
-            spotDict[clean] = item;
-            spotDict[d.symbol.toUpperCase()] = item;
-            return item;
-          }
+    try {
+      const url = `https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${clean}USDT`;
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': COMMON_HEADERS['User-Agent'],
+          'Accept': 'application/json'
         }
-      } catch (e) {}
+      });
+      if (res.ok) {
+        const d = await res.json();
+        if (d && d.symbol) {
+          const item = {
+            symbol: d.symbol,
+            ticker: clean,
+            name: clean,
+            zhName: getChineseDisplayName(d.symbol, '', clean),
+            price: parseFloat(d.lastPrice) || 0,
+            priceChangePercent: parseFloat(d.priceChangePercent) || 0
+          };
+          spotDict[clean] = item;
+          spotDict[d.symbol.toUpperCase()] = item;
+          return item;
+        }
+      } else {
+        debugErrors.push({ sym: clean, status: res.status });
+      }
+    } catch (e) {
+      debugErrors.push({ sym: clean, error: e.message });
     }
     return null;
   });
@@ -617,7 +614,7 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
 
   // 🛡️ 铁律：只要有效条数为 0，直接返回 count: 0，绝不组装空消息！
   if (htmlRows.length === 0) {
-    return { count: 0, title: '', textHtml: '', textMd: '' };
+    return { count: 0, title: '', textHtml: '', textMd: '', debugErrors, spotDict };
   }
 
   const title = isBoot ? '🚀 币安 USDT 异动雷达 · 部署上线成功' : '📊 币安 USDT 异动雷达 · 自选资产实时行情';
