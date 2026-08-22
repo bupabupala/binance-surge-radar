@@ -166,6 +166,7 @@ ${summaryText}
 import { KV_KEYS } from '../config/constants.js';
 import { getKVBinding } from '../utils/response.js';
 import { getWatchlist, inspectWatchlistSignals } from './quant.js';
+import { getChineseDisplayName } from '../config/dict.js';
 
 let gInMemoryBotConfig = null;
 
@@ -466,7 +467,7 @@ export async function sendUnifiedBroadcast(botConfig, title, textHtml, textMarkd
   return Promise.all(promises);
 }
 
-export function generateWatchlistSnapshotReport(freshData, watchlist = [], isBoot = false) {
+export async function generateWatchlistSnapshotReport(freshData, watchlist = [], isBoot = false) {
   const spotDict = {};
   (freshData?.spot || []).forEach(item => {
     if (item.symbol) spotDict[item.symbol.toUpperCase()] = item;
@@ -490,14 +491,12 @@ export function generateWatchlistSnapshotReport(freshData, watchlist = [], isBoo
     ? watchlist
     : ['BTC', 'ETH', 'SOL', 'SPCXB', 'SNDKB', 'NVDAB'];
 
-  const htmlRows = [];
-  const mdRows = [];
-
-  for (const sym of targetList) {
+  // 🚀 1. 检查是否存在缺失标的（如冷启动大盘尚未完全初始化）
+  const missingSpotTargets = [];
+  targetList.forEach(sym => {
     const rawTarget = String(sym).trim();
-    const upper = rawTarget.toUpperCase();
-    const cleanSym = upper.replace(/(\/USDT|USDT)$/i, '');
-
+    const upper = rawTarget.toUpperCase().replace(/[\/\-_]/g, '');
+    const cleanSym = upper.replace(/USDT$/i, '');
     let token = null;
     if (upper === 'SPACEX' || upper === 'SPACEXB' || upper === 'SPCX') {
       token = stocksDict['SPCXB'] || stocksDict['SPCX'];
@@ -505,6 +504,92 @@ export function generateWatchlistSnapshotReport(freshData, watchlist = [], isBoo
       token = stocksDict[upper];
     } else if (stocksDict[upper + 'B']) {
       token = stocksDict[upper + 'B'];
+    } else if (spotDict[cleanSym + 'USDT'] || spotDict[cleanSym]) {
+      token = spotDict[cleanSym + 'USDT'] || spotDict[cleanSym];
+    } else if (stocksDict[upper]) {
+      token = stocksDict[upper];
+    } else if (alphaDict[upper] || alphaDict[rawTarget.toLowerCase()]) {
+      token = alphaDict[upper] || alphaDict[rawTarget.toLowerCase()];
+    }
+
+    if (!token) {
+      missingSpotTargets.push(cleanSym);
+    }
+  });
+
+  // 🚀 2. 若有缺失，并行直接直拉币安原生接口（50ms 隔离兜底，单币失败不影响其他币）
+  if (missingSpotTargets.length > 0) {
+    const singlePromises = missingSpotTargets.map(async clean => {
+      try {
+        const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${clean}USDT`);
+        if (res.ok) {
+          const d = await res.json();
+          const price = parseFloat(d.lastPrice) || 0;
+          const chg = parseFloat(d.priceChangePercent) || 0;
+          const zhName = getChineseDisplayName(d.symbol, '', clean);
+          const item = {
+            symbol: d.symbol,
+            rawSymbol: d.symbol,
+            ticker: clean,
+            name: clean,
+            zhName: zhName,
+            price: price,
+            priceChangePercent: chg
+          };
+          spotDict[d.symbol] = item;
+          spotDict[clean] = item;
+          if (clean.endsWith('B')) {
+            stocksDict[clean] = item;
+          }
+        }
+      } catch (e) {}
+    });
+
+    const stockPulsePromise = (async () => {
+      try {
+        const res = await fetch('https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/pulse/unified/rank/list/ai?chainIds=56,CT_501,8453,1&rankType=40&page=1&size=50');
+        if (res.ok) {
+          const json = await res.json();
+          (json?.data?.tokens || []).forEach(t => {
+            const sym = (t.symbol || '').toUpperCase();
+            const price = parseFloat(t.price) || 0;
+            const chg = parseFloat(t.percentChange24h) || 0;
+            const item = {
+              symbol: sym,
+              rawSymbol: sym,
+              ticker: sym,
+              name: t.stockCompanyName || sym,
+              zhName: t.stockCompanyNameZh || t.name || sym,
+              price,
+              priceChangePercent: chg
+            };
+            stocksDict[sym] = item;
+            if (sym.endsWith('B')) {
+              stocksDict[sym.slice(0, -1)] = item;
+            }
+          });
+        }
+      } catch (e) {}
+    })();
+
+    await Promise.allSettled([...singlePromises, stockPulsePromise]);
+  }
+
+  const htmlRows = [];
+  const mdRows = [];
+
+  for (const sym of targetList) {
+    const rawTarget = String(sym).trim();
+    const upper = rawTarget.toUpperCase().replace(/[\/\-_]/g, '');
+    const cleanSym = upper.replace(/USDT$/i, '');
+
+    let token = null;
+    if (upper === 'SPACEX' || upper === 'SPACEXB' || upper === 'SPCX') {
+      token = stocksDict['SPCXB'] || stocksDict['SPCX'] || spotDict['SPCXBUSDT'];
+    } else if (upper.endsWith('B') && (stocksDict[upper] || spotDict[upper + 'USDT'])) {
+      token = stocksDict[upper] || spotDict[upper + 'USDT'];
+    } else if (stocksDict[upper + 'B'] || spotDict[upper + 'BUSDT']) {
+      token = stocksDict[upper + 'B'] || spotDict[upper + 'BUSDT'];
     } else if (spotDict[cleanSym + 'USDT']) {
       token = spotDict[cleanSym + 'USDT'];
     } else if (spotDict[upper]) {
@@ -519,7 +604,7 @@ export function generateWatchlistSnapshotReport(freshData, watchlist = [], isBoo
       const chg = Number(token.priceChangePercent) || 0;
       const isUp = chg >= 0;
       const displaySym = (token.symbol || '').replace(/(\/USDT|USDT)$/i, '');
-      const zhName = token.zhName || token.name || '';
+      const zhName = token.zhName || token.name || getChineseDisplayName(displaySym, '', displaySym);
       const price = Number(token.price) || 0;
       const surgeStr = (token.stars && token.stars >= 2) ? ` ⭐${token.stars}星` : '';
 
@@ -533,13 +618,13 @@ export function generateWatchlistSnapshotReport(freshData, watchlist = [], isBoo
 
   const textHtml = `<b>${title}</b>\n\n` +
     `📊 <b>自选标的最新行情快报：</b>\n` +
-    (htmlRows.length > 0 ? htmlRows.join('\n') : '• 暂未添加自选标的 (已加载默认主流)') + `\n\n` +
+    (htmlRows.length > 0 ? htmlRows.join('\n') : '• 正在同步实时自选行情...') + `\n\n` +
     `• <b>监控状态</b>：全天候 7×24h 极速微巡检已就绪 (~12秒/轮)\n` +
     `• <b>报告时间</b>：${nowStr}`;
 
   const textMd = `### ${title}\n\n` +
     `> **📊 自选标的最新行情快报**\n\n` +
-    (mdRows.length > 0 ? mdRows.join('\n') : '- 暂未添加自选标的') + `\n\n` +
+    (mdRows.length > 0 ? mdRows.join('\n') : '- 正在同步实时自选行情...') + `\n\n` +
     `---\n` +
     `- **监控状态**：全天候 7×24h 极速微巡检已就绪 (~12秒/轮)\n` +
     `- **报告时间**：${nowStr}`;
@@ -561,8 +646,8 @@ export async function sendTestNotification(botConfig, env = null, freshData = nu
     watchlist = await getWatchlist(env);
   }
 
-  if (reportData) {
-    const report = generateWatchlistSnapshotReport(reportData, watchlist, false);
+  if (reportData || watchlist.length > 0) {
+    const report = await generateWatchlistSnapshotReport(reportData, watchlist, false);
     return sendUnifiedBroadcast(botConfig, report.title, report.textHtml, report.textMd);
   }
 
@@ -698,7 +783,7 @@ export async function processScheduledAlerts(env, freshData) {
   if (!gHasSentBootReport) {
     gHasSentBootReport = true;
     try {
-      const bootReport = generateWatchlistSnapshotReport(freshData, watchlist, true);
+      const bootReport = await generateWatchlistSnapshotReport(freshData, watchlist, true);
       await sendUnifiedBroadcast(botConfig, bootReport.title, bootReport.textHtml, bootReport.textMd);
     } catch (e) {}
   }
