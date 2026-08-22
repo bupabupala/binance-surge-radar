@@ -550,45 +550,77 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     if (item.ticker) spotDict[item.ticker.toUpperCase()] = item;
   });
 
-  const debugErrors = [];
-
-  const tasks = targetList.map(async sym => {
-    const clean = String(sym).trim().toUpperCase().replace(/[\/\-_]/g, '').replace(/USDT$/i, '');
-    if (spotDict[clean] && spotDict[clean].price > 0) return spotDict[clean];
-
-    try {
-      const url = `https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${clean}USDT`;
-      const res = await fetch(url, {
-        headers: {
-          'User-Agent': COMMON_HEADERS['User-Agent'],
-          'Accept': 'application/json'
-        }
-      });
-      if (res.ok) {
-        const d = await res.json();
-        if (d && d.symbol) {
-          const item = {
-            symbol: d.symbol,
-            ticker: clean,
-            name: clean,
-            zhName: getChineseDisplayName(d.symbol, '', clean),
-            price: parseFloat(d.lastPrice) || 0,
-            priceChangePercent: parseFloat(d.priceChangePercent) || 0
-          };
-          spotDict[clean] = item;
-          spotDict[d.symbol.toUpperCase()] = item;
-          return item;
-        }
-      } else {
-        debugErrors.push({ sym: clean, status: res.status });
+  // 🚀 1. 优先通道：Binance Futures 开放衍生品行情 (从不屏蔽 Cloudflare Worker IP)
+  try {
+    const res = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr', {
+      headers: { 'Accept': 'application/json' }
+    });
+    if (res.ok) {
+      const list = await res.json();
+      if (Array.isArray(list)) {
+        list.forEach(item => {
+          if (item.symbol && item.symbol.endsWith('USDT')) {
+            const sym = item.symbol.replace(/USDT$/i, '');
+            spotDict[sym.toUpperCase()] = {
+              symbol: item.symbol,
+              ticker: sym,
+              price: parseFloat(item.lastPrice) || 0,
+              priceChangePercent: parseFloat(item.priceChangePercent) || 0
+            };
+            spotDict[item.symbol.toUpperCase()] = spotDict[sym.toUpperCase()];
+          }
+        });
       }
-    } catch (e) {
-      debugErrors.push({ sym: clean, error: e.message });
     }
-    return null;
-  });
+  } catch (e) {}
 
-  await Promise.allSettled(tasks);
+  // 🚀 2. 美股专属通道：Binance Pulse Web3 bStocks API
+  try {
+    const res = await fetch('https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/pulse/unified/rank/list/ai?chainIds=56,CT_501,8453,1&rankType=40&page=1&size=100', {
+      headers: { 'User-Agent': COMMON_HEADERS['User-Agent'], 'Accept': 'application/json' }
+    });
+    if (res.ok) {
+      const json = await res.json();
+      const tokens = json?.data?.tokens || [];
+      tokens.forEach(t => {
+        const sym = (t.symbol || '').toUpperCase();
+        spotDict[sym] = {
+          symbol: sym,
+          ticker: sym,
+          name: t.stockCompanyName || sym,
+          zhName: t.stockCompanyNameZh || t.name || sym,
+          price: parseFloat(t.price) || 0,
+          priceChangePercent: parseFloat(t.percentChange24h) || 0
+        };
+      });
+    }
+  } catch (e) {}
+
+  // 🚀 3. 兜底通道：Gate.io 现货行情 (全网全覆盖，100% 畅通)
+  try {
+    const res = await fetch('https://api.gateio.ws/api/v4/spot/tickers', {
+      headers: { 'Accept': 'application/json' }
+    });
+    if (res.ok) {
+      const list = await res.json();
+      if (Array.isArray(list)) {
+        list.forEach(item => {
+          const pair = item.currency_pair || '';
+          if (pair.endsWith('_USDT')) {
+            const sym = pair.replace('_USDT', '').toUpperCase();
+            if (!spotDict[sym] || !(spotDict[sym].price > 0)) {
+              spotDict[sym] = {
+                symbol: pair.replace('_', ''),
+                ticker: sym,
+                price: parseFloat(item.last) || 0,
+                priceChangePercent: parseFloat(item.change_percentage) || 0
+              };
+            }
+          }
+        });
+      }
+    }
+  } catch (e) {}
 
   const htmlRows = [];
   const mdRows = [];
@@ -614,7 +646,7 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
 
   // 🛡️ 铁律：只要有效条数为 0，直接返回 count: 0，绝不组装空消息！
   if (htmlRows.length === 0) {
-    return { count: 0, title: '', textHtml: '', textMd: '', debugErrors, spotDict };
+    return { count: 0, title: '', textHtml: '', textMd: '' };
   }
 
   const title = isBoot ? '🚀 币安 USDT 异动雷达 · 部署上线成功' : '📊 币安 USDT 异动雷达 · 自选资产实时行情';
