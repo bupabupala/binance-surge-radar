@@ -540,26 +540,58 @@ async function fetchPulseStocks() {
 }
 
 export async function generateWatchlistSnapshotReport(freshData, watchlist = [], isBoot = false, env = null) {
-  let data = freshData;
-  if (!data || !Array.isArray(data.spot) || data.spot.length === 0) {
-    data = await getOrFetchDashboard(env).catch(() => null);
-  }
+  const targetList = Array.isArray(watchlist) && watchlist.length > 0
+    ? watchlist
+    : ['SPCXB', 'SNDKB', 'TAO', 'AVAX', 'MAV', 'AIGENSYN', 'ASTER', 'TRUMP', 'GOOGLB', 'TSLAB', 'SKHYB'];
 
   const spotDict = {};
-  (data?.spot || []).forEach(item => {
+  (freshData?.spot || []).forEach(item => {
     if (item.symbol) spotDict[item.symbol.toUpperCase()] = item;
     if (item.ticker) spotDict[item.ticker.toUpperCase()] = item;
   });
 
-  const stocksDict = {};
-  (data?.stocks || []).forEach(item => {
-    if (item.symbol) stocksDict[item.symbol.toUpperCase()] = item;
-    if (item.ticker) stocksDict[item.ticker.toUpperCase()] = item;
+  const tasks = targetList.map(async sym => {
+    const clean = String(sym).trim().toUpperCase().replace(/[\/\-_]/g, '').replace(/USDT$/i, '');
+    if (spotDict[clean] && spotDict[clean].price > 0) return spotDict[clean];
+
+    const mirrors = [
+      `https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${clean}USDT`,
+      `https://api.binance.com/api/v3/ticker/24hr?symbol=${clean}USDT`,
+      `https://api1.binance.com/api/v3/ticker/24hr?symbol=${clean}USDT`,
+      `https://api2.binance.com/api/v3/ticker/24hr?symbol=${clean}USDT`,
+      `https://api3.binance.com/api/v3/ticker/24hr?symbol=${clean}USDT`
+    ];
+
+    for (const url of mirrors) {
+      try {
+        const res = await fetch(url, {
+          headers: {
+            'User-Agent': COMMON_HEADERS['User-Agent'],
+            'Accept': 'application/json'
+          }
+        });
+        if (res.ok) {
+          const d = await res.json();
+          if (d && d.symbol) {
+            const item = {
+              symbol: d.symbol,
+              ticker: clean,
+              name: clean,
+              zhName: getChineseDisplayName(d.symbol, '', clean),
+              price: parseFloat(d.lastPrice) || 0,
+              priceChangePercent: parseFloat(d.priceChangePercent) || 0
+            };
+            spotDict[clean] = item;
+            spotDict[d.symbol.toUpperCase()] = item;
+            return item;
+          }
+        }
+      } catch (e) {}
+    }
+    return null;
   });
 
-  const targetList = Array.isArray(watchlist) && watchlist.length > 0
-    ? watchlist
-    : ['SPCXB', 'SNDKB', 'TAO', 'AVAX', 'MAV', 'AIGENSYN', 'ASTER', 'TRUMP', 'GOOGLB', 'TSLAB', 'SKHYB'];
+  await Promise.allSettled(tasks);
 
   const htmlRows = [];
   const mdRows = [];
@@ -569,12 +601,7 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     const upper = rawTarget.toUpperCase().replace(/[\/\-_]/g, '');
     const cleanSym = upper.replace(/USDT$/i, '');
 
-    let token = null;
-    if (upper === 'SPACEX' || upper === 'SPACEXB' || upper === 'SPCX') {
-      token = stocksDict['SPCXB'] || stocksDict['SPCX'];
-    } else {
-      token = stocksDict[upper] || spotDict[cleanSym] || spotDict[upper] || spotDict[upper + 'USDT'];
-    }
+    const token = spotDict[cleanSym] || spotDict[upper] || spotDict[upper + 'USDT'];
 
     if (token && Number(token.price) > 0) {
       const chg = Number(token.priceChangePercent) || 0;
