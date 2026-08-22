@@ -6,7 +6,13 @@ import { KV_KEYS, BINANCE_UPSTREAM, COMMON_HEADERS } from '../config/constants.j
 import { getKVBinding, formatTimeAgo } from '../utils/response.js';
 import { getChineseDisplayName } from '../config/dict.js';
 
+let gCachedSpot = { data: [], timestamp: 0 };
+
 export async function fetchSpotTickers() {
+  if (Date.now() - gCachedSpot.timestamp < 10000 && gCachedSpot.data.length > 500) {
+    return gCachedSpot.data;
+  }
+
   const mirrors = [
     'https://data-api.binance.vision/api/v3/ticker/24hr',
     'https://api.binance.com/api/v3/ticker/24hr'
@@ -16,7 +22,7 @@ export async function fetchSpotTickers() {
   for (const url of mirrors) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
 
       const res = await fetch(url, {
         headers: { 'User-Agent': COMMON_HEADERS['User-Agent'], 'Accept': 'application/json' },
@@ -34,7 +40,7 @@ export async function fetchSpotTickers() {
   }
 
   if (!Array.isArray(rawData) || rawData.length === 0) {
-    return [];
+    return gCachedSpot.data || [];
   }
 
   const result = [];
@@ -68,6 +74,10 @@ export async function fetchSpotTickers() {
         icon: `https://bin.bnbstatic.com/static/images/home/coin-logo/${cleanSym}.png`
       });
     }
+  }
+
+  if (result.length > 500) {
+    gCachedSpot = { data: result, timestamp: Date.now() };
   }
 
   return result;

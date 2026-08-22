@@ -74,8 +74,12 @@ export function inspectWatchlistSignals(dashboardData, watchlist, botConfig, ale
     // C. 其它资产按唯一键精确命中
     let token = null;
 
-    if (upper.endsWith('B') && stocksDict[upper]) {
+    if (upper === 'SPACEX' || upper === 'SPACEXB' || upper === 'SPCX') {
+      token = stocksDict['SPCXB'] || stocksDict['SPCX'];
+    } else if (upper.endsWith('B') && stocksDict[upper]) {
       token = stocksDict[upper];
+    } else if (stocksDict[upper + 'B']) {
+      token = stocksDict[upper + 'B'];
     } else if (spotDict[cleanSym + 'USDT']) {
       token = spotDict[cleanSym + 'USDT'];
     } else if (spotDict[upper]) {
