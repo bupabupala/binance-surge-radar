@@ -220,7 +220,7 @@ export default {
 
       if (path === '/api/announcements') {
         if (!authRole) return jsonResponse({ code: 401, message: '请先登录' }, 401);
-        const data = await fetchAnnouncements();
+        const data = await fetchAnnouncements(env);
         return jsonResponse({ success: true, data }, 200, { 'Cache-Control': 'public, max-age=60, s-maxage=120' });
       }
 
