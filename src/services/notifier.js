@@ -556,6 +556,29 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     }
   }
 
+  if (htmlRows.length === 0) {
+    const directPromises = targetList.map(async sym => {
+      const clean = sym.trim().toUpperCase().replace(/[\/\-_]/g, '').replace(/USDT$/i, '');
+      try {
+        const res = await fetch(`https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${clean}USDT`, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Accept': 'application/json' }
+        });
+        if (res.ok) {
+          const d = await res.json();
+          if (d && d.symbol) {
+            const price = parseFloat(d.lastPrice) || 0;
+            const chg = parseFloat(d.priceChangePercent) || 0;
+            const zhName = getChineseDisplayName(d.symbol, '', clean);
+            const isUp = chg >= 0;
+            htmlRows.push(`• <b>${clean}</b> (${zhName})：$${price.toLocaleString('en-US')} (<b>${isUp ? '+' : ''}${chg.toFixed(2)}%</b>)`);
+            mdRows.push(`- **${clean}** (${zhName})：\`$${price.toLocaleString('en-US')}\` (${isUp ? '🟢 **+' : '🔴 **'}${chg.toFixed(2)}%**)`);
+          }
+        }
+      } catch (e) {}
+    });
+    await Promise.allSettled(directPromises);
+  }
+
   const title = isBoot ? '🚀 币安 USDT 异动雷达 · 部署上线成功' : '🔔 币安 USDT 异动雷达 · 自选资产快报';
   const nowStr = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
 
@@ -576,33 +599,15 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
 }
 
 export async function sendTestNotification(botConfig, env = null, freshData = null) {
-  let reportData = freshData;
-  if (!reportData && env) {
-    try {
-      const { aggregateAllData } = await import('./binance.js');
-      reportData = await aggregateAllData(env);
-    } catch (e) {}
-  }
-
   let watchlist = [];
   if (env) {
     watchlist = await getWatchlist(env);
   }
 
-  const report = await generateWatchlistSnapshotReport(reportData, watchlist, false);
+  const report = await generateWatchlistSnapshotReport(freshData, watchlist, false);
   if (report.count > 0) {
     return sendUnifiedBroadcast(botConfig, report.title, report.textHtml, report.textMd);
   }
-
-  // 若单次未拉全，尝试最后一次强行同步拉取
-  try {
-    const { fetchSpotTickers } = await import('./binance.js');
-    const directSpot = await fetchSpotTickers();
-    const retryReport = await generateWatchlistSnapshotReport({ spot: directSpot }, watchlist, false);
-    if (retryReport.count > 0) {
-      return sendUnifiedBroadcast(botConfig, retryReport.title, retryReport.textHtml, retryReport.textMd);
-    }
-  } catch (e) {}
 
   const title = '🔔 币安 USDT 异动雷达 · 连通性测试';
   const textHtml = `<b>🔔 币安 USDT 异动雷达 · 连通性测试</b>\n\n` +
@@ -729,10 +734,12 @@ export async function processScheduledAlerts(env, freshData) {
 
   // 0. 🚀 部署上线 / 服务启动首次自选标的最新行情快照推送
   if (!gHasSentBootReport) {
-    gHasSentBootReport = true;
     try {
       const bootReport = await generateWatchlistSnapshotReport(freshData, watchlist, true);
-      await sendUnifiedBroadcast(botConfig, bootReport.title, bootReport.textHtml, bootReport.textMd);
+      if (bootReport.count > 0) {
+        gHasSentBootReport = true;
+        await sendUnifiedBroadcast(botConfig, bootReport.title, bootReport.textHtml, bootReport.textMd);
+      }
     } catch (e) {}
   }
 
