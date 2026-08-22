@@ -33,6 +33,7 @@ export class RestKVAdapter {
     this.namespaceId = (namespaceId || '').trim();
     this.accountId = (accountId || '').trim();
     this._cachedAccountId = this.accountId || null;
+    this._memCache = new Map();
   }
 
   async getAccountId() {
@@ -57,6 +58,14 @@ export class RestKVAdapter {
   }
 
   async get(key) {
+    // 🛡️ 内存级秒级响应：若当前实例已读取过该 key，直接返回内存值，0 次子请求
+    if (this._memCache.has(key)) {
+      const entry = this._memCache.get(key);
+      if (Date.now() - entry.time < 60000) {
+        return entry.val;
+      }
+    }
+
     try {
       const accId = await this.getAccountId();
       if (!accId) return null;
@@ -64,15 +73,23 @@ export class RestKVAdapter {
       const res = await fetch(url, {
         headers: { 'Authorization': `Bearer ${this.apiToken}` }
       });
-      if (res.status === 404) return null;
+      if (res.status === 404) {
+        this._memCache.set(key, { val: null, time: Date.now() });
+        return null;
+      }
       if (!res.ok) return null;
-      return await res.text();
+      const text = await res.text();
+      this._memCache.set(key, { val: text, time: Date.now() });
+      return text;
     } catch (e) {
       return null;
     }
   }
 
   async put(key, value, options = {}) {
+    const valStr = typeof value === 'string' ? value : JSON.stringify(value);
+    this._memCache.set(key, { val: valStr, time: Date.now() });
+
     try {
       const accId = await this.getAccountId();
       if (!accId) return false;
@@ -86,7 +103,7 @@ export class RestKVAdapter {
           'Authorization': `Bearer ${this.apiToken}`,
           'Content-Type': 'text/plain'
         },
-        body: typeof value === 'string' ? value : JSON.stringify(value)
+        body: valStr
       });
       const data = await res.json().catch(() => ({}));
       return res.ok && data.success !== false;
@@ -96,6 +113,7 @@ export class RestKVAdapter {
   }
 
   async delete(key) {
+    this._memCache.delete(key);
     try {
       const accId = await this.getAccountId();
       if (!accId) return false;
