@@ -457,7 +457,102 @@ export async function sendUnifiedBroadcast(botConfig, title, textHtml, textMarkd
   return Promise.all(promises);
 }
 
-export async function sendTestNotification(botConfig) {
+export function generateWatchlistSnapshotReport(freshData, watchlist = [], isBoot = false) {
+  const spotDict = {};
+  (freshData?.spot || []).forEach(item => {
+    if (item.symbol) spotDict[item.symbol.toUpperCase()] = item;
+    if (item.ticker) spotDict[item.ticker.toUpperCase()] = item;
+  });
+
+  const stocksDict = {};
+  (freshData?.stocks || []).forEach(item => {
+    if (item.symbol) stocksDict[item.symbol.toUpperCase()] = item;
+    if (item.ticker) stocksDict[item.ticker.toUpperCase()] = item;
+  });
+
+  const alphaDict = {};
+  (freshData?.alpha || []).forEach(item => {
+    if (item.symbol) alphaDict[item.symbol.toUpperCase()] = item;
+    if (item.ticker) alphaDict[item.ticker.toUpperCase()] = item;
+    if (item.contractAddress) alphaDict[item.contractAddress.toLowerCase()] = item;
+  });
+
+  const targetList = Array.isArray(watchlist) && watchlist.length > 0
+    ? watchlist
+    : ['BTC', 'ETH', 'SOL', 'SPCXB', 'SNDKB', 'NVDAB'];
+
+  const htmlRows = [];
+  const mdRows = [];
+
+  for (const sym of targetList) {
+    const rawTarget = String(sym).trim();
+    const upper = rawTarget.toUpperCase();
+    const cleanSym = upper.replace(/(\/USDT|USDT)$/i, '');
+
+    let token = null;
+    if (upper.endsWith('B') && stocksDict[upper]) {
+      token = stocksDict[upper];
+    } else if (spotDict[cleanSym + 'USDT']) {
+      token = spotDict[cleanSym + 'USDT'];
+    } else if (spotDict[upper]) {
+      token = spotDict[upper];
+    } else if (stocksDict[upper]) {
+      token = stocksDict[upper];
+    } else if (alphaDict[upper] || alphaDict[rawTarget.toLowerCase()]) {
+      token = alphaDict[upper] || alphaDict[rawTarget.toLowerCase()];
+    }
+
+    if (token) {
+      const chg = Number(token.priceChangePercent) || 0;
+      const isUp = chg >= 0;
+      const displaySym = (token.symbol || '').replace(/(\/USDT|USDT)$/i, '');
+      const zhName = token.zhName || token.name || '';
+      const price = Number(token.price) || 0;
+      const surgeStr = (token.stars && token.stars >= 2) ? ` ⭐${token.stars}星` : '';
+
+      htmlRows.push(`• <b>${displaySym}</b> (${zhName})：$${price.toLocaleString('en-US')} (<b>${isUp ? '+' : ''}${chg.toFixed(2)}%</b>)${surgeStr}`);
+      mdRows.push(`- **${displaySym}** (${zhName})：\`$${price.toLocaleString('en-US')}\` (${isUp ? '🟢 **+' : '🔴 **'}${chg.toFixed(2)}%**)${surgeStr}`);
+    }
+  }
+
+  const title = isBoot ? '🚀 币安 USDT 异动雷达 · 部署上线成功' : '🔔 币安 USDT 异动雷达 · 自选资产快报';
+  const nowStr = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+
+  const textHtml = `<b>${title}</b>\n\n` +
+    `📊 <b>自选标的最新行情快报：</b>\n` +
+    (htmlRows.length > 0 ? htmlRows.join('\n') : '• 暂未添加自选标的 (已加载默认主流)') + `\n\n` +
+    `• <b>监控状态</b>：全天候 7×24h 极速微巡检已就绪 (~12秒/轮)\n` +
+    `• <b>报告时间</b>：${nowStr}`;
+
+  const textMd = `### ${title}\n\n` +
+    `> **📊 自选标的最新行情快报**\n\n` +
+    (mdRows.length > 0 ? mdRows.join('\n') : '- 暂未添加自选标的') + `\n\n` +
+    `---\n` +
+    `- **监控状态**：全天候 7×24h 极速微巡检已就绪 (~12秒/轮)\n` +
+    `- **报告时间**：${nowStr}`;
+
+  return { title, textHtml, textMd };
+}
+
+export async function sendTestNotification(botConfig, env = null, freshData = null) {
+  let reportData = freshData;
+  if (!reportData && env) {
+    try {
+      const { aggregateAllData } = await import('./binance.js');
+      reportData = await aggregateAllData(env);
+    } catch (e) {}
+  }
+
+  let watchlist = [];
+  if (env) {
+    watchlist = await getWatchlist(env);
+  }
+
+  if (reportData) {
+    const report = generateWatchlistSnapshotReport(reportData, watchlist, false);
+    return sendUnifiedBroadcast(botConfig, report.title, report.textHtml, report.textMd);
+  }
+
   const title = '🔔 币安 USDT 异动雷达 · 连通性测试';
   const textHtml = `<b>🔔 币安 USDT 异动雷达 · 连通性测试</b>\n\n` +
     `✅ 恭喜！机器人推送通道配置成功。\n` +
@@ -573,6 +668,7 @@ export async function detectSymbolChangesAndNotify(env, botConfig, currentActive
 }
 
 let gAlertHistory = {};
+let gHasSentBootReport = false;
 
 export async function processScheduledAlerts(env, freshData) {
   const botConfig = await getBotConfig(env);
@@ -584,6 +680,15 @@ export async function processScheduledAlerts(env, freshData) {
   const preTradingSymbols = (freshData.preTradingSymbols || []);
   const cooldownMs = (Number(botConfig?.rules?.cooldownMin) || 30) * 60 * 1000;
   const now = Date.now();
+
+  // 0. 🚀 部署上线 / 服务启动首次自选标的最新行情快照推送
+  if (!gHasSentBootReport) {
+    gHasSentBootReport = true;
+    try {
+      const bootReport = generateWatchlistSnapshotReport(freshData, watchlist, true);
+      await sendUnifiedBroadcast(botConfig, bootReport.title, bootReport.textHtml, bootReport.textMd);
+    } catch (e) {}
+  }
 
   // 1. 📢 7×24h 币安官方 4 大分类新公告差分监听与全要素推送 (含标题、正文核心摘要、原文直达)
   if (freshData.announcements) {
