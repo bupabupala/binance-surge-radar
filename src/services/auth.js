@@ -13,7 +13,13 @@ export async function hashPassword(str, salt = 'bian_secret_salt_2026') {
   return hashArr.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+let gCachedAuthConfig = null;
+
 export async function getAuthConfig(env) {
+  if (gCachedAuthConfig) {
+    return gCachedAuthConfig;
+  }
+
   const kv = getKVBinding(env);
   let config = {
     adminPassword: env?.ADMIN_PASSWORD || env?.ADMIN || null,
@@ -36,6 +42,8 @@ export async function getAuthConfig(env) {
       }
     } catch (e) {}
   }
+
+  gCachedAuthConfig = config;
   return config;
 }
 
@@ -146,7 +154,10 @@ export async function savePasswordConfig(env, { newAdminPassword, newGuestPasswo
     authCfg.adminPath = p;
   }
 
-  await kv.put(KV_KEYS.AUTH_CONFIG, JSON.stringify(authCfg));
+  if (kv) {
+    await kv.put(KV_KEYS.AUTH_CONFIG, JSON.stringify(authCfg));
+  }
+  gCachedAuthConfig = authCfg;
   const token = await hashPassword('admin:' + authCfg.adminPassword);
   return { 
     success: true, 

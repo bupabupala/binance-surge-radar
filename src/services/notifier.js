@@ -35,9 +35,11 @@ function extractPlainTextFromAst(node, maxLen = 300) {
 }
 
 // 🎯 币安官方 4 大公告分类 7×24h 自动差分监听与全要素推送 (标题 + 正文核心摘要 + 原文链接)
+let gSeenAnnouncementsSet = null;
+
 export async function detectNewAnnouncementsAndNotify(env, botConfig, announcements) {
   const kv = getKVBinding(env);
-  if (!kv || !announcements) return;
+  if (!announcements) return;
 
   const allItems = announcements.all || [
     ...(announcements.newListings || []),
@@ -49,16 +51,23 @@ export async function detectNewAnnouncementsAndNotify(env, botConfig, announceme
   if (!Array.isArray(allItems) || allItems.length === 0) return;
 
   try {
-    const rawSeen = await kv.get('bian:seen_announcements:v2');
-    let seenCodes = new Set(rawSeen ? JSON.parse(rawSeen) : []);
-
-    // 首次运行初始化历史缓存，不爆发推送历史公告
-    if (seenCodes.size === 0) {
-      const initialCodes = allItems.map(a => a.code || a.id).filter(Boolean);
-      await kv.put('bian:seen_announcements:v2', JSON.stringify(initialCodes), { expirationTtl: 86400 * 30 });
-      return;
+    if (!gSeenAnnouncementsSet) {
+      let rawSeen = null;
+      if (kv) rawSeen = await kv.get('bian:seen_announcements:v2');
+      gSeenAnnouncementsSet = new Set(rawSeen ? JSON.parse(rawSeen) : []);
+      
+      // 首次运行初始化历史缓存，不爆发推送历史公告
+      if (gSeenAnnouncementsSet.size === 0) {
+        const initialCodes = allItems.map(a => a.code || a.id).filter(Boolean);
+        gSeenAnnouncementsSet = new Set(initialCodes);
+        if (kv) {
+          await kv.put('bian:seen_announcements:v2', JSON.stringify(initialCodes), { expirationTtl: 86400 * 30 });
+        }
+        return;
+      }
     }
 
+    const seenCodes = gSeenAnnouncementsSet;
     const newArticles = allItems.filter(a => (a.code || a.id) && !seenCodes.has(a.code || a.id));
 
     if (newArticles.length > 0) {
@@ -465,17 +474,38 @@ export async function sendTestNotification(botConfig) {
   return sendUnifiedBroadcast(botConfig, title, textHtml, textMd);
 }
 
+let gCachedActiveSet = null;
+let gCachedPreSet = null;
+
 // 🎯 新币上架 / 下架停牌 7×24h 自动差分巡检与秒级推送
 export async function detectSymbolChangesAndNotify(env, botConfig, currentActiveSymbols, currentPreTradingSymbols) {
   const kv = getKVBinding(env);
-  if (!kv || !Array.isArray(currentActiveSymbols) || currentActiveSymbols.length === 0) return;
+  if (!Array.isArray(currentActiveSymbols) || currentActiveSymbols.length === 0) return;
 
   try {
-    const rawPrev = await kv.get('bian:active_symbols:v2');
-    const rawPrevPre = await kv.get('bian:pretrading_symbols:v2');
+    if (!gCachedActiveSet) {
+      let rawPrev = null;
+      let rawPrevPre = null;
+      if (kv) {
+        rawPrev = await kv.get('bian:active_symbols:v2');
+        rawPrevPre = await kv.get('bian:pretrading_symbols:v2');
+      }
+      gCachedActiveSet = new Set(rawPrev ? JSON.parse(rawPrev) : []);
+      gCachedPreSet = new Set(rawPrevPre ? JSON.parse(rawPrevPre) : []);
 
-    const prevActiveSet = new Set(rawPrev ? JSON.parse(rawPrev) : []);
-    const prevPreSet = new Set(rawPrevPre ? JSON.parse(rawPrevPre) : []);
+      if (gCachedActiveSet.size === 0) {
+        gCachedActiveSet = new Set(currentActiveSymbols);
+        gCachedPreSet = new Set(currentPreTradingSymbols || []);
+        if (kv) {
+          await kv.put('bian:active_symbols:v2', JSON.stringify(currentActiveSymbols), { expirationTtl: 86400 * 7 });
+          await kv.put('bian:pretrading_symbols:v2', JSON.stringify(currentPreTradingSymbols || []), { expirationTtl: 86400 * 7 });
+        }
+        return;
+      }
+    }
+
+    const prevActiveSet = gCachedActiveSet;
+    const prevPreSet = gCachedPreSet;
     const currentActiveSet = new Set(currentActiveSymbols);
     const currentPreSet = new Set(currentPreTradingSymbols || []);
 
@@ -484,7 +514,10 @@ export async function detectSymbolChangesAndNotify(env, botConfig, currentActive
     const newlyListed = currentActiveSymbols.filter(s => !prevActiveSet.has(s) && !prevPreSet.has(s));
 
     const allNew = [...new Set([...newPreTrading, ...newlyListed])];
+    let hasChanges = false;
+
     if (allNew.length > 0 && prevActiveSet.size > 100) {
+      hasChanges = true;
       for (const sym of allNew) {
         const clean = sym.replace(/USDT$/, '');
         const title = `🚀【币安新币上线预警】发现全新交易对 ${clean}!`;
@@ -493,11 +526,11 @@ export async function detectSymbolChangesAndNotify(env, botConfig, currentActive
           `• 交易对：<code>${sym}</code>\n` +
           `• 状态：即将开盘 / 正式上线\n` +
           `• 时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
-        const textMd = `### 🚀【币安新币上线预警】发现新交易对！\n\n` +
-          `- **资产代码**：**${clean}**\n` +
-          `- **交易对**：\`${sym}\`\n` +
-          `- **状态**：即将开盘 / 正式上线\n` +
-          `- **时间**：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
+        const textMd = '### 🚀【币安新币上线预警】发现新交易对！\n\n' +
+          '- **资产代码**：**' + clean + '**\n' +
+          '- **交易对**：`' + sym + '`\n' +
+          '- **状态**：即将开盘 / 正式上线\n' +
+          '- **时间**：' + new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
 
         await sendUnifiedBroadcast(botConfig, title, textHtml, textMd);
       }
@@ -507,6 +540,7 @@ export async function detectSymbolChangesAndNotify(env, botConfig, currentActive
     if (prevActiveSet.size > 100) {
       const delisted = [...prevActiveSet].filter(s => !currentActiveSet.has(s));
       if (delisted.length > 0 && delisted.length < 50) {
+        hasChanges = true;
         for (const sym of delisted) {
           const clean = sym.replace(/USDT$/, '');
           const title = `⚠️【币安代币下架/停牌】${clean} 已停止交易`;
@@ -515,20 +549,26 @@ export async function detectSymbolChangesAndNotify(env, botConfig, currentActive
             `• 交易对：<code>${sym}</code>\n` +
             `• 状态：已停止交易 / 停牌下架\n` +
             `• 时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
-          const textMd = `### ⚠️【币安代币下架/停牌预警】\n\n` +
-            `- **资产代码**：**${clean}**\n` +
-            `- **交易对**：\`${sym}\`\n` +
-            `- **状态**：已停止交易 / 停牌下架\n` +
-            `- **时间**：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
+          const textMd = '### ⚠️【币安代币下架/停牌预警】\n\n' +
+            '- **资产代码**：**' + clean + '**\n' +
+            '- **交易对**：`' + sym + '`\n' +
+            '- **状态**：已停止交易 / 停牌下架\n' +
+            '- **时间**：' + new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
 
           await sendUnifiedBroadcast(botConfig, title, textHtml, textMd);
         }
       }
     }
 
-    // 保存当前快照
-    await kv.put('bian:active_symbols:v2', JSON.stringify(currentActiveSymbols), { expirationTtl: 86400 * 7 });
-    await kv.put('bian:pretrading_symbols:v2', JSON.stringify(currentPreTradingSymbols || []), { expirationTtl: 86400 * 7 });
+    // 仅在发现变化时才保存快照与更新 KV
+    if (hasChanges) {
+      gCachedActiveSet = currentActiveSet;
+      gCachedPreSet = currentPreSet;
+      if (kv) {
+        await kv.put('bian:active_symbols:v2', JSON.stringify(currentActiveSymbols), { expirationTtl: 86400 * 7 });
+        await kv.put('bian:pretrading_symbols:v2', JSON.stringify(currentPreTradingSymbols || []), { expirationTtl: 86400 * 7 });
+      }
+    }
   } catch (e) {}
 }
 
@@ -555,30 +595,18 @@ export async function processScheduledAlerts(env, freshData) {
     if (item.stars >= (botConfig.surgeAlert?.minStars || 3) && item.surgeMultiplier >= (botConfig.surgeAlert?.minSurgeMultiplier || 3.0)) {
       const clean = item.ticker || item.symbol.replace(/USDT$/, '');
       const title = `🔥【小市值放量异动】${clean} 放量 ${item.surgeMultiplier}x (${item.starDisplay})`;
-      const textHtml = `<b>🔥【小市值放量异动雷达】</b>
-
-` +
-        `• 资产：<b>${clean}</b> (${item.zhName || ''})
-` +
-        `• 放量星级：<b>${item.starDisplay} (${item.surgeMultiplier}x)</b>
-` +
-        `• 最新价格：$${item.price} (${item.priceChange >= 0 ? '+' : ''}${item.priceChange}%)
-` +
-        `• 市值：$${(item.marketCap / 1e6).toFixed(2)}M (&lt; $100M)
-` +
+      const textHtml = `<b>🔥【小市值放量异动雷达】</b>\n\n` +
+        `• 资产：<b>${clean}</b> (${item.zhName || ''})\n` +
+        `• 放量星级：<b>${item.starDisplay} (${item.surgeMultiplier}x)</b>\n` +
+        `• 最新价格：$${item.price} (${item.priceChange >= 0 ? '+' : ''}${item.priceChange}%)\n` +
+        `• 市值：$${(item.marketCap / 1e6).toFixed(2)}M (&lt; $100M)\n` +
         `• 时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
 
-      const textMd = `### 🔥【小市值放量异动雷达】
-
-` +
-        `- **资产**：**${clean}** (${item.zhName || ''})
-` +
-        `- **放量星级**：**${item.starDisplay} (${item.surgeMultiplier}x)**
-` +
-        `- **最新价格**：$${item.price} (${item.priceChange >= 0 ? '+' : ''}${item.priceChange}%)
-` +
-        `- **市值**：$${(item.marketCap / 1e6).toFixed(2)}M (< $100M)
-` +
+      const textMd = `### 🔥【小市值放量异动雷达】\n\n` +
+        `- **资产**：**${clean}** (${item.zhName || ''})\n` +
+        `- **放量星级**：**${item.starDisplay} (${item.surgeMultiplier}x)**\n` +
+        `- **最新价格**：$${item.price} (${item.priceChange >= 0 ? '+' : ''}${item.priceChange}%)\n` +
+        `- **市值**：$${(item.marketCap / 1e6).toFixed(2)}M (< $100M)\n` +
         `- **时间**：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
 
       await sendUnifiedBroadcast(botConfig, title, textHtml, textMd);

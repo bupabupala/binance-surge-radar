@@ -227,11 +227,6 @@ export default {
         if (authRole !== 'admin') return jsonResponse({ code: 403, message: '仅管理员可手动触发同步' }, 403);
         const startTime = Date.now();
         const data = await aggregateAllData(env);
-        const kv = getKVBinding(env);
-        if (kv) {
-          await kv.put(KV_KEYS.DASHBOARD_DATA, JSON.stringify(data), { expirationTtl: 3600 });
-          await kv.put(KV_KEYS.LAST_SYNC, String(Date.now()));
-        }
         await processScheduledAlerts(env, data);
         return jsonResponse({
           success: true,
@@ -244,12 +239,9 @@ export default {
 
       if (path === '/api/health') {
         const kv = getKVBinding(env);
-        let lastSync = null;
-        if (kv) lastSync = await kv.get(KV_KEYS.LAST_SYNC);
         return jsonResponse({
           status: 'ok',
           kvBound: Boolean(kv),
-          lastSyncTimestamp: lastSync ? Number(lastSync) : null,
           serverTime: new Date().toISOString()
         });
       }
@@ -265,11 +257,6 @@ export default {
     ctx.waitUntil((async () => {
       try {
         const data = await aggregateAllData(env);
-        const kv = getKVBinding(env);
-        if (kv) {
-          await kv.put(KV_KEYS.DASHBOARD_DATA, JSON.stringify(data), { expirationTtl: 3600 });
-          await kv.put(KV_KEYS.LAST_SYNC, String(Date.now()));
-        }
         await processScheduledAlerts(env, data);
       } catch (e) {}
     })());

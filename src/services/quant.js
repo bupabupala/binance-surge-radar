@@ -6,7 +6,12 @@ import { KV_KEYS } from '../config/constants.js';
 import { getKVBinding } from '../utils/response.js';
 import { getChineseDisplayName } from '../config/dict.js';
 
+let gCachedWatchlist = null;
+
 export async function getWatchlist(env) {
+  if (gCachedWatchlist) {
+    return gCachedWatchlist;
+  }
   const kv = getKVBinding(env);
   let list = ['BTC', 'ETH', 'SOL', 'SPACEXb', 'SNDKB', 'NVDAB'];
   if (kv) {
@@ -15,12 +20,14 @@ export async function getWatchlist(env) {
       if (raw) list = JSON.parse(raw);
     } catch (e) {}
   }
+  gCachedWatchlist = list;
   return list;
 }
 
 export async function saveWatchlist(env, list) {
   const kv = getKVBinding(env);
   const cleanList = Array.isArray(list) ? list : [];
+  gCachedWatchlist = cleanList;
   if (kv) {
     await kv.put(KV_KEYS.WATCHLIST, JSON.stringify(cleanList));
   }

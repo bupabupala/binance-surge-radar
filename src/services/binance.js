@@ -73,17 +73,14 @@ export async function fetchSpotTickers() {
   return result;
 }
 
+let gCachedAlpha = { data: [], timestamp: 0 };
+let gCachedStocks = { data: [], timestamp: 0 };
+let gCachedDashboard = { data: null, timestamp: 0 };
+
 // 🎯 1. 纯正 Web3 链上原生代币 (rankType = 20)
 export async function fetchAlphaTokens(env = null) {
-  const kv = env ? getKVBinding(env) : null;
-  if (kv) {
-    try {
-      const cached = await kv.get(KV_KEYS.ALPHA_DATA);
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) {}
+  if (Date.now() - gCachedAlpha.timestamp < 60000 && gCachedAlpha.data.length > 0) {
+    return gCachedAlpha.data;
   }
 
   const pages = [1, 2];
@@ -169,10 +166,8 @@ export async function fetchAlphaTokens(env = null) {
     });
   }
 
-  if (kv && list.length > 0) {
-    try {
-      await kv.put(KV_KEYS.ALPHA_DATA, JSON.stringify(list), { expirationTtl: 1800 });
-    } catch (e) {}
+  if (list.length > 0) {
+    gCachedAlpha = { data: list, timestamp: Date.now() };
   }
 
   return list;
@@ -180,15 +175,8 @@ export async function fetchAlphaTokens(env = null) {
 
 // 🎯 2. 美股与独角兽实时动态价格行情流 (rankType = 40 · 过滤 ...on 冗余)
 export async function fetchStockTokens(env = null) {
-  const kv = env ? getKVBinding(env) : null;
-  if (kv) {
-    try {
-      const cached = await kv.get(KV_KEYS.STOCKS_DATA);
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) {}
+  if (Date.now() - gCachedStocks.timestamp < 60000 && gCachedStocks.data.length > 0) {
+    return gCachedStocks.data;
   }
 
   const pages = [1, 2];
@@ -264,10 +252,8 @@ export async function fetchStockTokens(env = null) {
     });
   }
 
-  if (kv && list.length > 0) {
-    try {
-      await kv.put(KV_KEYS.STOCKS_DATA, JSON.stringify(list), { expirationTtl: 3600 });
-    } catch (e) {}
+  if (list.length > 0) {
+    gCachedStocks = { data: list, timestamp: Date.now() };
   }
 
   return list;
@@ -467,24 +453,12 @@ export async function aggregateAllData(env) {
 }
 
 export async function getOrFetchDashboard(env) {
-  const kv = getKVBinding(env);
-  if (kv) {
-    try {
-      const raw = await kv.get(KV_KEYS.DASHBOARD_DATA);
-      if (raw && raw.trim().length > 0) {
-        const cached = JSON.parse(raw);
-        if (cached && cached.timestamp && (Date.now() - cached.timestamp < 30000) && cached.spot?.length > 100) {
-          return cached;
-        }
-      }
-    } catch (e) {}
+  if (gCachedDashboard.data && (Date.now() - gCachedDashboard.timestamp < 8000) && gCachedDashboard.data.spot?.length > 100) {
+    return gCachedDashboard.data;
   }
   const fresh = await aggregateAllData(env);
-  if (kv && fresh.spot.length > 50) {
-    try {
-      await kv.put(KV_KEYS.DASHBOARD_DATA, JSON.stringify(fresh), { expirationTtl: 3600 });
-      await kv.put(KV_KEYS.LAST_SYNC, String(Date.now()));
-    } catch (e) {}
+  if (fresh && fresh.spot && fresh.spot.length > 50) {
+    gCachedDashboard = { data: fresh, timestamp: Date.now() };
   }
   return fresh;
 }
