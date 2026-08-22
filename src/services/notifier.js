@@ -520,34 +520,54 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
   // 🚀 2. 若有缺失，并行直接直拉币安原生接口（50ms 隔离兜底，单币失败不影响其他币）
   if (missingSpotTargets.length > 0) {
     const singlePromises = missingSpotTargets.map(async clean => {
-      try {
-        const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${clean}USDT`);
-        if (res.ok) {
-          const d = await res.json();
-          const price = parseFloat(d.lastPrice) || 0;
-          const chg = parseFloat(d.priceChangePercent) || 0;
-          const zhName = getChineseDisplayName(d.symbol, '', clean);
-          const item = {
-            symbol: d.symbol,
-            rawSymbol: d.symbol,
-            ticker: clean,
-            name: clean,
-            zhName: zhName,
-            price: price,
-            priceChangePercent: chg
-          };
-          spotDict[d.symbol] = item;
-          spotDict[clean] = item;
-          if (clean.endsWith('B')) {
-            stocksDict[clean] = item;
+      const mirrors = [
+        `https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${clean}USDT`,
+        `https://api.binance.com/api/v3/ticker/24hr?symbol=${clean}USDT`
+      ];
+      for (const u of mirrors) {
+        try {
+          const res = await fetch(u, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+              'Accept': 'application/json'
+            }
+          });
+          if (res.ok) {
+            const d = await res.json();
+            if (d && d.symbol) {
+              const price = parseFloat(d.lastPrice) || 0;
+              const chg = parseFloat(d.priceChangePercent) || 0;
+              const zhName = getChineseDisplayName(d.symbol, '', clean);
+              const item = {
+                symbol: d.symbol,
+                rawSymbol: d.symbol,
+                ticker: clean,
+                name: clean,
+                zhName: zhName,
+                price: price,
+                priceChangePercent: chg
+              };
+              spotDict[d.symbol] = item;
+              spotDict[clean] = item;
+              if (clean.endsWith('B')) {
+                stocksDict[clean] = item;
+              }
+              break;
+            }
           }
-        }
-      } catch (e) {}
+        } catch (e) {}
+      }
     });
 
     const stockPulsePromise = (async () => {
       try {
-        const res = await fetch('https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/pulse/unified/rank/list/ai?chainIds=56,CT_501,8453,1&rankType=40&page=1&size=50');
+        const res = await fetch('https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/pulse/unified/rank/list/ai?chainIds=56,CT_501,8453,1&rankType=40&page=1&size=50', {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'application/json',
+            'lang': 'zh-CN'
+          }
+        });
         if (res.ok) {
           const json = await res.json();
           (json?.data?.tokens || []).forEach(t => {
@@ -629,7 +649,7 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     `- **监控状态**：全天候 7×24h 极速微巡检已就绪 (~12秒/轮)\n` +
     `- **报告时间**：${nowStr}`;
 
-  return { title, textHtml, textMd };
+  return { title, textHtml, textMd, count: htmlRows.length };
 }
 
 export async function sendTestNotification(botConfig, env = null, freshData = null) {
@@ -646,23 +666,28 @@ export async function sendTestNotification(botConfig, env = null, freshData = nu
     watchlist = await getWatchlist(env);
   }
 
-  if (reportData || watchlist.length > 0) {
-    const report = await generateWatchlistSnapshotReport(reportData, watchlist, false);
+  const report = await generateWatchlistSnapshotReport(reportData, watchlist, false);
+  if (report.count > 0) {
     return sendUnifiedBroadcast(botConfig, report.title, report.textHtml, report.textMd);
   }
 
+  // 若单次未拉全，尝试最后一次强行同步拉取
+  try {
+    const { fetchSpotTickers } = await import('./binance.js');
+    const directSpot = await fetchSpotTickers();
+    const retryReport = await generateWatchlistSnapshotReport({ spot: directSpot }, watchlist, false);
+    if (retryReport.count > 0) {
+      return sendUnifiedBroadcast(botConfig, retryReport.title, retryReport.textHtml, retryReport.textMd);
+    }
+  } catch (e) {}
+
   const title = '🔔 币安 USDT 异动雷达 · 连通性测试';
   const textHtml = `<b>🔔 币安 USDT 异动雷达 · 连通性测试</b>\n\n` +
-    `✅ 恭喜！机器人推送通道配置成功。\n` +
-    `• 监控板块：现货全量、Alpha 链上、bStocks 美股\n` +
-    `• 异动策略：市值 &lt; $100M 小盘放量 1.5x~10x+ / 5% 暴涨 / 新币上线与下架\n` +
-    `• 触发时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
-
+    `• <b>推送通道</b>：机器人连通性正常！\n` +
+    `• <b>时间</b>：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
   const textMd = `### 🔔 币安 USDT 异动雷达 · 连通性测试\n\n` +
-    `> **恭喜！机器人推送通道配置成功。**\n\n` +
-    `- **监控板块**：现货全量、Alpha 链上、bStocks 美股\n` +
-    `- **异动策略**：市值 < $100M 放量星级雷达 / 5% 暴涨暴跌 / 新币上架与下架停牌\n` +
-    `- **触发时间**：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
+    `- **推送通道**：机器人连通性正常！\n` +
+    `- **时间**：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
 
   return sendUnifiedBroadcast(botConfig, title, textHtml, textMd);
 }
