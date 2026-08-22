@@ -162,7 +162,7 @@ ${summaryText}
 
 import { KV_KEYS } from '../config/constants.js';
 import { getKVBinding } from '../utils/response.js';
-import { getWatchlist } from './quant.js';
+import { getWatchlist, inspectWatchlistSignals } from './quant.js';
 
 let gInMemoryBotConfig = null;
 
@@ -572,6 +572,8 @@ export async function detectSymbolChangesAndNotify(env, botConfig, currentActive
   } catch (e) {}
 }
 
+let gAlertHistory = {};
+
 export async function processScheduledAlerts(env, freshData) {
   const botConfig = await getBotConfig(env);
   if (!botConfig.telegram?.enabled && !botConfig.dingtalk?.enabled) return;
@@ -589,11 +591,49 @@ export async function processScheduledAlerts(env, freshData) {
   // 2. 检测新币上线与下架
   await detectSymbolChangesAndNotify(env, botConfig, currentSymbols, preTradingSymbols);
 
-  // 3. 检测放量星级异动 (< $100M 市值)
+  // 3. 🎯 自选标的量化信号巡检 (5% 暴涨暴跌 / EMA 均线金叉死叉 / 连续 3 星放量建仓)
+  if (Array.isArray(watchlist) && watchlist.length > 0) {
+    const signals = inspectWatchlistSignals(freshData, watchlist, botConfig, gAlertHistory);
+    for (const sig of signals) {
+      const isUp = sig.chg24h >= 0;
+      const title = `${sig.type} ${sig.symbol} (${sig.zhName || ''}) ${isUp ? '+' : ''}${sig.chg24h.toFixed(2)}%`;
+      
+      const textHtml = `<b>${sig.type}</b>\n\n` +
+        `• 监控标的：<b>${sig.symbol}</b> (${sig.zhName || ''})\n` +
+        `• 量化信号：<b>${sig.signal}</b>\n` +
+        `• 最新价格：$${Number(sig.price).toLocaleString('en-US')}\n` +
+        `• 24h 涨跌：<b>${isUp ? '+' : ''}${sig.chg24h.toFixed(2)}%</b>\n` +
+        `• 15m 波动：${sig.chg15m >= 0 ? '+' : ''}${sig.chg15m.toFixed(2)}%\n` +
+        `• 放量星级：${'⭐'.repeat(Math.max(1, sig.stars || 1))} (${sig.surgeMul}x)\n` +
+        `• 触发时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
+
+      const textMd = `### ${sig.type}\n\n` +
+        `- **监控标的**：**${sig.symbol}** (${sig.zhName || ''})\n` +
+        `- **量化信号**：**${sig.signal}**\n` +
+        `- **最新价格**：$${Number(sig.price).toLocaleString('en-US')}\n` +
+        `- **24h 涨跌**：**${isUp ? '+' : ''}${sig.chg24h.toFixed(2)}%**\n` +
+        `- **15m 波动**：${sig.chg15m >= 0 ? '+' : ''}${sig.chg15m.toFixed(2)}%\n` +
+        `- **放量星级**：${'⭐'.repeat(Math.max(1, sig.stars || 1))} (${sig.surgeMul}x)\n` +
+        `- **触发时间**：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
+
+      await sendUnifiedBroadcast(botConfig, title, textHtml, textMd);
+    }
+  }
+
+  // 4. 检测全网小市值放量异动 (< $100M 市值)
   const surge15m = (freshData.surge && freshData.surge['15m']) || [];
+  const cooldownMs = (Number(botConfig?.rules?.cooldownMin) || 30) * 60 * 1000;
+  const now = Date.now();
+
   for (const item of surge15m.slice(0, 3)) {
     if (item.stars >= (botConfig.surgeAlert?.minStars || 3) && item.surgeMultiplier >= (botConfig.surgeAlert?.minSurgeMultiplier || 3.0)) {
       const clean = item.ticker || item.symbol.replace(/USDT$/, '');
+      const alertKey = `surge_${clean}_${item.stars}`;
+      if (gAlertHistory[alertKey] && (now - gAlertHistory[alertKey] < cooldownMs)) {
+        continue;
+      }
+      gAlertHistory[alertKey] = now;
+
       const title = `🔥【小市值放量异动】${clean} 放量 ${item.surgeMultiplier}x (${item.starDisplay})`;
       const textHtml = `<b>🔥【小市值放量异动雷达】</b>\n\n` +
         `• 资产：<b>${clean}</b> (${item.zhName || ''})\n` +
