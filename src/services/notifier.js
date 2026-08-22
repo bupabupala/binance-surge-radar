@@ -492,107 +492,30 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     : ['BTC', 'ETH', 'SOL', 'SPCXB', 'SNDKB', 'NVDAB'];
 
   // 🚀 1. 检查是否存在缺失标的（如冷启动大盘尚未完全初始化）
-  const missingSpotTargets = [];
-  targetList.forEach(sym => {
+  const hasMissing = targetList.some(sym => {
     const rawTarget = String(sym).trim();
     const upper = rawTarget.toUpperCase().replace(/[\/\-_]/g, '');
     const cleanSym = upper.replace(/USDT$/i, '');
-    let token = null;
-    if (upper === 'SPACEX' || upper === 'SPACEXB' || upper === 'SPCX') {
-      token = stocksDict['SPCXB'] || stocksDict['SPCX'];
-    } else if (upper.endsWith('B') && stocksDict[upper]) {
-      token = stocksDict[upper];
-    } else if (stocksDict[upper + 'B']) {
-      token = stocksDict[upper + 'B'];
-    } else if (spotDict[cleanSym + 'USDT'] || spotDict[cleanSym]) {
-      token = spotDict[cleanSym + 'USDT'] || spotDict[cleanSym];
-    } else if (stocksDict[upper]) {
-      token = stocksDict[upper];
-    } else if (alphaDict[upper] || alphaDict[rawTarget.toLowerCase()]) {
-      token = alphaDict[upper] || alphaDict[rawTarget.toLowerCase()];
-    }
-
-    if (!token) {
-      missingSpotTargets.push(cleanSym);
-    }
+    return !spotDict[cleanSym + 'USDT'] && !spotDict[cleanSym] && !stocksDict[upper] && !stocksDict[upper + 'B'];
   });
 
-  // 🚀 2. 若有缺失，并行直接直拉币安原生接口（50ms 隔离兜底，单币失败不影响其他币）
-  if (missingSpotTargets.length > 0) {
-    const singlePromises = missingSpotTargets.map(async clean => {
-      const mirrors = [
-        `https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${clean}USDT`,
-        `https://api.binance.com/api/v3/ticker/24hr?symbol=${clean}USDT`
-      ];
-      for (const u of mirrors) {
-        try {
-          const res = await fetch(u, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-              'Accept': 'application/json'
-            }
-          });
-          if (res.ok) {
-            const d = await res.json();
-            if (d && d.symbol) {
-              const price = parseFloat(d.lastPrice) || 0;
-              const chg = parseFloat(d.priceChangePercent) || 0;
-              const zhName = getChineseDisplayName(d.symbol, '', clean);
-              const item = {
-                symbol: d.symbol,
-                rawSymbol: d.symbol,
-                ticker: clean,
-                name: clean,
-                zhName: zhName,
-                price: price,
-                priceChangePercent: chg
-              };
-              spotDict[d.symbol] = item;
-              spotDict[clean] = item;
-              if (clean.endsWith('B')) {
-                stocksDict[clean] = item;
-              }
-              break;
-            }
-          }
-        } catch (e) {}
-      }
-    });
-
-    const stockPulsePromise = (async () => {
-      try {
-        const res = await fetch('https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/pulse/unified/rank/list/ai?chainIds=56,CT_501,8453,1&rankType=40&page=1&size=50', {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept': 'application/json',
-            'lang': 'zh-CN'
-          }
-        });
-        if (res.ok) {
-          const json = await res.json();
-          (json?.data?.tokens || []).forEach(t => {
-            const sym = (t.symbol || '').toUpperCase();
-            const price = parseFloat(t.price) || 0;
-            const chg = parseFloat(t.percentChange24h) || 0;
-            const item = {
-              symbol: sym,
-              rawSymbol: sym,
-              ticker: sym,
-              name: t.stockCompanyName || sym,
-              zhName: t.stockCompanyNameZh || t.name || sym,
-              price,
-              priceChangePercent: chg
-            };
-            stocksDict[sym] = item;
-            if (sym.endsWith('B')) {
-              stocksDict[sym.slice(0, -1)] = item;
-            }
-          });
-        }
-      } catch (e) {}
-    })();
-
-    await Promise.allSettled([...singlePromises, stockPulsePromise]);
+  // 🚀 2. 若有缺失，仅需 1 次调用 fetchSpotTickers() 批量带回 670+ 代币，仅消耗 1 个子请求
+  if (hasMissing || Object.keys(spotDict).length === 0) {
+    try {
+      const { fetchSpotTickers, fetchStockTokens } = await import('./binance.js');
+      const [spotList, stocksList] = await Promise.all([
+        fetchSpotTickers(),
+        fetchStockTokens(null)
+      ]);
+      (spotList || []).forEach(item => {
+        if (item.symbol) spotDict[item.symbol.toUpperCase()] = item;
+        if (item.ticker) spotDict[item.ticker.toUpperCase()] = item;
+      });
+      (stocksList || []).forEach(item => {
+        if (item.symbol) stocksDict[item.symbol.toUpperCase()] = item;
+        if (item.ticker) stocksDict[item.ticker.toUpperCase()] = item;
+      });
+    } catch (e) {}
   }
 
   const htmlRows = [];

@@ -257,16 +257,16 @@ export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil((async () => {
       const startTime = Date.now();
-      // 在 1 分钟周期内进行 4 轮微巡检 (约每 12 秒扫描一次，实现 ~12 秒级极速异动捕获)
-      for (let i = 0; i < 4; i++) {
+      // 在 1 分钟周期内进行 2 轮轻量微巡检 (0s 与 25s 各一轮，总子请求数严格控制在 4 次以内)
+      for (let i = 0; i < 2; i++) {
         try {
           const data = await aggregateAllData(env);
           await processScheduledAlerts(env, data);
         } catch (e) {}
 
-        if (Date.now() - startTime >= 42000) break;
-        if (i < 3) {
-          await new Promise(resolve => setTimeout(resolve, 11000));
+        if (Date.now() - startTime >= 35000) break;
+        if (i < 1) {
+          await new Promise(resolve => setTimeout(resolve, 25000));
         }
       }
     })());
