@@ -68,7 +68,10 @@ export async function detectNewAnnouncementsAndNotify(env, botConfig, announceme
     }
 
     const seenCodes = gSeenAnnouncementsSet;
-    const newArticles = allItems.filter(a => (a.code || a.id) && !seenCodes.has(a.code || a.id));
+    const newArticles = allItems.filter(a => {
+      const code = String(a.code || a.id || '').trim();
+      return code && !code.startsWith('seed_') && !seenCodes.has(code);
+    });
 
     if (newArticles.length > 0) {
       // 一次最多推送 3 条最新，避免消息轰炸
@@ -399,9 +402,15 @@ export async function sendDingTalkMessage(token, secret, title, markdownContent,
     const cleanKeyword = (keyword || '').trim();
     let finalTitle = title;
     let finalContent = markdownContent;
-    if (cleanKeyword && !title.includes(cleanKeyword) && !markdownContent.includes(cleanKeyword)) {
-      finalTitle = `[${cleanKeyword}] ${title}`;
-      finalContent = `> **【${cleanKeyword}】**\n\n${markdownContent}`;
+
+    // 🛡️ 钉钉安全关键词静默优雅注入 (不再在顶部显示显眼的 > **【DT】**，改在卡片底部以极简微标签呈现)
+    if (cleanKeyword) {
+      if (!title.includes(cleanKeyword)) {
+        finalTitle = `${title} (${cleanKeyword})`;
+      }
+      if (!markdownContent.includes(cleanKeyword)) {
+        finalContent = `${markdownContent}\n\n<font color="#777777" size="1">🏷️ ${cleanKeyword}</font>`;
+      }
     }
 
     const res = await fetch(url, {
