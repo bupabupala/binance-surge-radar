@@ -228,8 +228,7 @@ export default {
         if (authRole !== 'admin') return jsonResponse({ code: 403, message: '仅管理员可手动触发推送' }, 403);
         const botConfig = await getBotConfig(env);
         const watchlist = await getWatchlist(env);
-        const freshData = await aggregateAllData(env);
-        const report = await generateWatchlistSnapshotReport(freshData, watchlist, false);
+        const report = await generateWatchlistSnapshotReport(null, watchlist, false);
         if (report.count > 0) {
           await sendUnifiedBroadcast(botConfig, report.title, report.textHtml, report.textMd);
           return jsonResponse({
