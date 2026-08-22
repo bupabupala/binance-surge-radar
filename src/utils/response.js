@@ -37,6 +37,10 @@ export class RestKVAdapter {
 
   async getAccountId() {
     if (this._cachedAccountId) return this._cachedAccountId;
+    if (this.accountId) {
+      this._cachedAccountId = this.accountId;
+      return this._cachedAccountId;
+    }
     try {
       const res = await fetch('https://api.cloudflare.com/client/v4/accounts', {
         headers: { 'Authorization': `Bearer ${this.apiToken}` }
@@ -130,13 +134,13 @@ export function getKVBinding(env) {
     }
   }
 
-  // 2. 自动降级为基于 Cloudflare REST API 的 KV 适配器 (根据 CF_API_TOKEN + BIAN_KV_ID 自动路由)
+  // 2. 自动降级为基于 Cloudflare REST API 的 KV 适配器 (根据 CF_API_TOKEN + BIAN_KV_ID + CF_ACCOUNT_ID)
   const apiToken = env.CF_API_TOKEN || env.CLOUDFLARE_API_TOKEN || env.API_TOKEN || '';
   const kvId = env.BIAN_KV_ID || env.KV_ID || env.KV_NAMESPACE_ID || '';
   const accountId = env.CF_ACCOUNT_ID || env.CLOUDFLARE_ACCOUNT_ID || env.ACCOUNT_ID || '';
 
   if (apiToken && kvId) {
-    if (!gCachedKV || gCachedKV.apiToken !== apiToken || gCachedKV.namespaceId !== kvId) {
+    if (!gCachedKV || gCachedKV.apiToken !== apiToken || gCachedKV.namespaceId !== kvId || gCachedKV.accountId !== accountId) {
       gCachedKV = new RestKVAdapter(apiToken, kvId, accountId);
     }
     return gCachedKV;
