@@ -224,6 +224,23 @@ export default {
         return jsonResponse({ success: true, data }, 200, { 'Cache-Control': 'public, max-age=60, s-maxage=120' });
       }
 
+      if (path === '/api/admin/push-watchlist-report') {
+        if (authRole !== 'admin') return jsonResponse({ code: 403, message: '仅管理员可手动触发推送' }, 403);
+        const botConfig = await getBotConfig(env);
+        const watchlist = await getWatchlist(env);
+        const report = await generateWatchlistSnapshotReport(null, watchlist, false);
+        if (report.count > 0) {
+          await sendUnifiedBroadcast(botConfig, report.title, report.textHtml, report.textMd);
+          return jsonResponse({
+            success: true,
+            message: `自选实时行情快报已推送至群！(共 ${report.count} 支标的)`,
+            count: report.count
+          });
+        } else {
+          return jsonResponse({ success: false, message: '未能拉取到自选标的行情，推送已取消' }, 400);
+        }
+      }
+
       if (path === '/api/sync') {
         if (authRole !== 'admin') return jsonResponse({ code: 403, message: '仅管理员可手动触发同步' }, 403);
         const startTime = Date.now();

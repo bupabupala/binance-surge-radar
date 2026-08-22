@@ -554,8 +554,12 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     const upper = rawTarget.toUpperCase().replace(/[\/\-_]/g, '');
     const cleanSym = upper.replace(/USDT$/i, '');
 
-    let token = stocksDict[upper] || stocksDict['SPCXB'] || spotDict[cleanSym] || spotDict[cleanSym + 'USDT'] || spotDict[upper];
-    if (upper === 'SPACEX' || upper === 'SPACEXB') token = stocksDict['SPCXB'] || stocksDict['SPCX'];
+    let token = null;
+    if (upper === 'SPACEX' || upper === 'SPACEXB' || upper === 'SPCX') {
+      token = stocksDict['SPCXB'] || stocksDict['SPCX'];
+    } else {
+      token = stocksDict[upper] || spotDict[cleanSym] || spotDict[upper];
+    }
 
     if (token && Number(token.price) > 0) {
       const chg = Number(token.priceChangePercent) || 0;
@@ -565,7 +569,7 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
       const price = Number(token.price);
 
       htmlRows.push(`• <b>${displaySym}</b> (${zhName})：$${price.toLocaleString('en-US')} (<b>${isUp ? '+' : ''}${chg.toFixed(2)}%</b>)`);
-      mdRows.push(`- **${displaySym}** (${zhName})：\`$${price.toLocaleString('en-US')}\` (${isUp ? '🟢 **+' : '🔴 **'}${chg.toFixed(2)}%**)`);
+      mdRows.push(`- **${displaySym}</b> (${zhName})：\`$${price.toLocaleString('en-US')}\` (${isUp ? '🟢 **+' : '🔴 **'}${chg.toFixed(2)}%**)`);
     }
   }
 
@@ -574,17 +578,17 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     return { count: 0, title: '', textHtml: '', textMd: '' };
   }
 
-  const title = isBoot ? '🚀 币安 USDT 异动雷达 · 部署上线成功' : '🔔 币安 USDT 异动雷达 · 自选资产快报';
+  const title = isBoot ? '🚀 币安 USDT 异动雷达 · 部署上线成功' : '📊 币安 USDT 异动雷达 · 自选资产实时行情';
   const nowStr = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
 
   const textHtml = `<b>${title}</b>\n\n` +
-    `📊 <b>自选标的最新行情快报：</b>\n` +
+    `📊 <b>自选标的最新行情快照：</b>\n` +
     htmlRows.join('\n') + `\n\n` +
     `• <b>监控状态</b>：全天候 7×24h 极速微巡检已就绪 (~12秒/轮)\n` +
     `• <b>报告时间</b>：${nowStr}`;
 
   const textMd = `### ${title}\n\n` +
-    `> **📊 自选标的最新行情快报**\n\n` +
+    `> **📊 自选标的最新行情快照**\n\n` +
     mdRows.join('\n') + `\n\n` +
     `---\n` +
     `- **监控状态**：全天候 7×24h 极速微巡检已就绪 (~12秒/轮)\n` +
@@ -658,22 +662,27 @@ export async function detectSymbolChangesAndNotify(env, botConfig, currentActive
     let hasChanges = false;
 
     if (allNew.length > 0 && prevActiveSet.size > 100) {
-      hasChanges = true;
       for (const sym of allNew) {
-        const clean = sym.replace(/USDT$/, '');
-        const title = `🚀【币安新币上线预警】发现全新交易对 ${clean}!`;
-        const textHtml = `<b>🚀【币安新币上线预警】发现新交易对！</b>\n\n` +
-          `• 资产代码：<b>${clean}</b>\n` +
-          `• 交易对：<code>${sym}</code>\n` +
-          `• 状态：即将开盘 / 正式上线\n` +
-          `• 时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
-        const textMd = '### 🚀【币安新币上线预警】发现新交易对！\n\n' +
-          '- **资产代码**：**' + clean + '**\n' +
-          '- **交易对**：`' + sym + '`\n' +
-          '- **状态**：即将开盘 / 正式上线\n' +
-          '- **时间**：' + new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+        const clean = sym.replace(/USDT$/i, '');
+        const isPre = (currentPreTradingSymbols || []).includes(sym);
+        const typeStr = isPre ? '✨ 币安新币盘前预售 / 即将开盘' : '🚀 币安现货全新交易对上线';
+        const title = `${typeStr}：${clean}`;
+        const zhName = getChineseDisplayName(sym, '', clean);
+
+        const textHtml = `<b>${typeStr}</b>\n\n` +
+          `• 上线代币：<b>${clean}</b> (${zhName})\n` +
+          `• 交易对：<b>${sym}</b>\n` +
+          `• 状态：<b>${isPre ? '盘前交易 (Pre-Trading)' : '现货主板已开放交易'}</b>\n` +
+          `• 发现时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
+
+        const textMd = `### ${typeStr}\n\n` +
+          `- **上线代币**：**${clean}** (${zhName})\n` +
+          `- **交易对**：\`${sym}\`\n` +
+          `- **交易状态**：**${isPre ? '盘前交易 (Pre-Trading)' : '现货主板已开放交易'}**\n` +
+          `- **发现时间**：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
 
         await sendUnifiedBroadcast(botConfig, title, textHtml, textMd);
+        hasChanges = true;
       }
     }
 
@@ -683,7 +692,7 @@ export async function detectSymbolChangesAndNotify(env, botConfig, currentActive
       if (delisted.length > 0 && delisted.length < 50) {
         hasChanges = true;
         for (const sym of delisted) {
-          const clean = sym.replace(/USDT$/, '');
+          const clean = sym.replace(/USDT$/i, '');
           const title = `⚠️【币安代币下架/停牌】${clean} 已停止交易`;
           const textHtml = `<b>⚠️【币安代币下架/停牌预警】</b>\n\n` +
             `• 资产代码：<b>${clean}</b>\n` +
@@ -713,8 +722,60 @@ export async function detectSymbolChangesAndNotify(env, botConfig, currentActive
   } catch (e) {}
 }
 
+let gCachedAnnounceIds = null;
+
+// 🎯 币安官方新公告差分监听
+export async function detectNewAnnouncementsAndNotify(env, botConfig, announcements) {
+  const kv = getKVBinding(env);
+  if (!Array.isArray(announcements) || announcements.length === 0) return;
+
+  try {
+    if (!gCachedAnnounceIds) {
+      let rawPrev = null;
+      if (kv) {
+        rawPrev = await kv.get('bian:seen_announcements:v2');
+      }
+      gCachedAnnounceIds = new Set(rawPrev ? JSON.parse(rawPrev) : []);
+
+      if (gCachedAnnounceIds.size === 0) {
+        gCachedAnnounceIds = new Set(announcements.map(a => String(a.id || a.code || a.title)));
+        if (kv) {
+          await kv.put('bian:seen_announcements:v2', JSON.stringify([...gCachedAnnounceIds]), { expirationTtl: 86400 * 14 });
+        }
+        return;
+      }
+    }
+
+    const prevIds = gCachedAnnounceIds;
+    const newItems = announcements.filter(a => !prevIds.has(String(a.id || a.code || a.title)));
+
+    if (newItems.length > 0 && prevIds.size > 0) {
+      for (const item of newItems) {
+        const title = `📢 币安官方最新公告：${item.title || ''}`;
+        const textHtml = `<b>📢 币安官方最新公告</b>\n\n` +
+          `• 公告标题：<b>${item.title || ''}</b>\n` +
+          `• 发布时间：${item.releaseDate ? new Date(item.releaseDate).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '刚刚'}\n` +
+          `• 官方链接：<a href="${item.url || 'https://www.binance.com/zh-CN/support/announcement'}">点击查看官方公告详情</a>`;
+
+        const textMd = `### 📢 币安官方最新公告\n\n` +
+          `> **${item.title || ''}**\n\n` +
+          `- **发布时间**：${item.releaseDate ? new Date(item.releaseDate).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '刚刚'}\n` +
+          `- **官方详情**：[点击查看官方公告](${item.url || 'https://www.binance.com/zh-CN/support/announcement'})`;
+
+        await sendUnifiedBroadcast(botConfig, title, textHtml, textMd);
+        gCachedAnnounceIds.add(String(item.id || item.code || item.title));
+      }
+
+      if (kv) {
+        await kv.put('bian:seen_announcements:v2', JSON.stringify([...gCachedAnnounceIds]), { expirationTtl: 86400 * 14 });
+      }
+    }
+  } catch (e) {}
+}
+
 let gAlertHistory = {};
 let gHasSentBootReport = false;
+let gLastSnapshotPushTime = 0;
 
 export async function processScheduledAlerts(env, freshData, isManual = false) {
   const botConfig = await getBotConfig(env);
@@ -722,6 +783,7 @@ export async function processScheduledAlerts(env, freshData, isManual = false) {
 
   const watchlist = await getWatchlist(env);
   const now = Date.now();
+  const snapshotIntervalMs = (Number(botConfig?.rules?.snapshotIntervalMin) || 10) * 60 * 1000;
 
   // 0. 🚀 部署上线 / 服务启动首次自选标的最新行情快照推送
   if (!gHasSentBootReport && !isManual) {
@@ -732,6 +794,19 @@ export async function processScheduledAlerts(env, freshData, isManual = false) {
         await sendUnifiedBroadcast(botConfig, bootReport.title, bootReport.textHtml, bootReport.textMd);
       }
     } catch (e) {}
+  }
+
+  // 0. 📊 定时推送自选标的实时价格快报（每 10 分钟一次，启动时亦自动推送首次）
+  if (Array.isArray(watchlist) && watchlist.length > 0 && !isManual) {
+    if (!gLastSnapshotPushTime || (now - gLastSnapshotPushTime >= snapshotIntervalMs)) {
+      try {
+        const report = await generateWatchlistSnapshotReport(freshData, watchlist, false);
+        if (report.count > 0) {
+          gLastSnapshotPushTime = now;
+          await sendUnifiedBroadcast(botConfig, report.title, report.textHtml, report.textMd);
+        }
+      } catch (e) {}
+    }
   }
 
   // 1. 📢 7×24h 官方新公告差分监听 (仅真实官方公告)
