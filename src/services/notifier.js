@@ -482,66 +482,70 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
 
   const targetList = Array.isArray(watchlist) && watchlist.length > 0
     ? watchlist
-    : ['BTC', 'ETH', 'SOL', 'SPCXB', 'SNDKB', 'NVDAB'];
+    : ['SPCXB', 'SNDKB', 'TAO', 'AVAX', 'MAV', 'AIGENSYN', 'ASTER', 'TRUMP', 'GOOGLB', 'TSLAB', 'SKHYB'];
 
-  // 🚀 1. 并发定向直拉币安官方 Vision 镜像，确保全部自选币种最新价格 100% 异步就绪
-  const directPromises = targetList.map(async sym => {
-    const rawTarget = String(sym).trim();
-    const upper = rawTarget.toUpperCase().replace(/[\/\-_]/g, '');
-    const cleanSym = upper.replace(/USDT$/i, '');
-    
-    // 美股标的 (SpaceX, SNDKB, NVDAB)
-    if (upper === 'SPACEX' || upper === 'SPACEXB' || upper === 'SPCXB' || upper === 'SNDKB' || upper === 'NVDAB') {
-      if (!stocksDict[upper] && !stocksDict['SPCXB']) {
-        try {
-          const res = await fetch('https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/pulse/unified/rank/list/ai?chainIds=56,CT_501,8453,1&rankType=40&page=1&size=50', {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Accept': 'application/json', 'lang': 'zh-CN' }
-          });
-          if (res.ok) {
-            const json = await res.json();
-            (json?.data?.tokens || []).forEach(t => {
-              const s = (t.symbol || '').toUpperCase();
-              stocksDict[s] = {
-                symbol: s,
-                ticker: s,
-                name: t.stockCompanyName || s,
-                zhName: t.stockCompanyNameZh || t.name || s,
-                price: parseFloat(t.price) || 0,
-                priceChangePercent: parseFloat(t.percentChange24h) || 0
-              };
-            });
-          }
-        } catch (e) {}
-      }
-      return;
-    }
+  // 🚀 1. 检查是否需要拉取 Pulse 动态美股标的
+  const hasStocks = targetList.some(s => {
+    const u = String(s).toUpperCase();
+    return u.endsWith('B') || u.endsWith('ON') || u === 'SPACEX' || u === 'SPACEXB';
+  });
 
-    // 现货 Vision 官方高速接口
-    if (!spotDict[cleanSym + 'USDT'] && !spotDict[cleanSym]) {
+  const fetchTasks = [];
+
+  if (hasStocks && Object.keys(stocksDict).length === 0) {
+    fetchTasks.push((async () => {
       try {
-        const res = await fetch(`https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${cleanSym}USDT`, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Accept': 'application/json' }
+        const pulseRes = await fetch('https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/pulse/unified/rank/list/ai?chainIds=56,CT_501,8453,1&rankType=40&page=1&size=100', {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Accept': 'application/json', 'lang': 'zh-CN' }
         });
-        if (res.ok) {
-          const d = await res.json();
-          if (d && d.symbol) {
-            spotDict[d.symbol] = {
-              symbol: d.symbol,
-              ticker: cleanSym,
-              name: cleanSym,
-              zhName: getChineseDisplayName(d.symbol, '', cleanSym),
-              price: parseFloat(d.lastPrice) || 0,
-              priceChangePercent: parseFloat(d.priceChangePercent) || 0
+        if (pulseRes.ok) {
+          const pulseJson = await pulseRes.json();
+          (pulseJson?.data?.tokens || []).forEach(t => {
+            const sym = (t.symbol || '').toUpperCase();
+            stocksDict[sym] = {
+              symbol: sym,
+              ticker: sym,
+              name: t.stockCompanyName || sym,
+              zhName: t.stockCompanyNameZh || t.name || sym,
+              price: parseFloat(t.price) || 0,
+              priceChangePercent: parseFloat(t.percentChange24h) || 0
             };
-          }
+          });
         }
       } catch (e) {}
+    })());
+  }
+
+  // 🚀 2. 并发拉取现货最新行情
+  targetList.forEach(sym => {
+    const clean = String(sym).trim().toUpperCase().replace(/[\/\-_]/g, '').replace(/USDT$/i, '');
+    if (!spotDict[clean + 'USDT'] && !spotDict[clean] && !clean.endsWith('B')) {
+      fetchTasks.push((async () => {
+        try {
+          const res = await fetch(`https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${clean}USDT`, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Accept': 'application/json' }
+          });
+          if (res.ok) {
+            const d = await res.json();
+            if (d && d.symbol) {
+              spotDict[clean] = {
+                symbol: d.symbol,
+                ticker: clean,
+                name: clean,
+                zhName: getChineseDisplayName(d.symbol, '', clean),
+                price: parseFloat(d.lastPrice) || 0,
+                priceChangePercent: parseFloat(d.priceChangePercent) || 0
+              };
+            }
+          }
+        } catch (e) {}
+      })());
     }
   });
 
-  await Promise.allSettled(directPromises);
+  await Promise.allSettled(fetchTasks);
 
-  // 🚀 2. 组装行情列表
+  // 🚀 3. 组装行情列表
   const htmlRows = [];
   const mdRows = [];
 
@@ -550,13 +554,13 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     const upper = rawTarget.toUpperCase().replace(/[\/\-_]/g, '');
     const cleanSym = upper.replace(/USDT$/i, '');
 
-    let token = stocksDict[upper] || stocksDict['SPCXB'] || spotDict[cleanSym + 'USDT'] || spotDict[cleanSym] || spotDict[upper];
+    let token = stocksDict[upper] || stocksDict['SPCXB'] || spotDict[cleanSym] || spotDict[cleanSym + 'USDT'] || spotDict[upper];
     if (upper === 'SPACEX' || upper === 'SPACEXB') token = stocksDict['SPCXB'] || stocksDict['SPCX'];
 
     if (token && Number(token.price) > 0) {
       const chg = Number(token.priceChangePercent) || 0;
       const isUp = chg >= 0;
-      const displaySym = (token.symbol || cleanSym).replace(/(\/USDT|USDT)$/i, '');
+      const displaySym = (token.ticker || token.symbol || cleanSym).replace(/(\/USDT|USDT)$/i, '');
       const zhName = token.zhName || token.name || getChineseDisplayName(displaySym, '', displaySym);
       const price = Number(token.price);
 
@@ -712,19 +716,15 @@ export async function detectSymbolChangesAndNotify(env, botConfig, currentActive
 let gAlertHistory = {};
 let gHasSentBootReport = false;
 
-export async function processScheduledAlerts(env, freshData) {
+export async function processScheduledAlerts(env, freshData, isManual = false) {
   const botConfig = await getBotConfig(env);
-  if (!botConfig.telegram?.enabled && !botConfig.dingtalk?.enabled) return;
+  if (!botConfig.telegram?.enabled && !botConfig.dingtalk?.enabled) return [];
 
   const watchlist = await getWatchlist(env);
-  const activeSpot = (freshData.spot || []).filter(item => item.price > 0 && item.volume24h > 0);
-  const currentSymbols = activeSpot.map(item => item.symbol);
-  const preTradingSymbols = (freshData.preTradingSymbols || []);
-  const cooldownMs = (Number(botConfig?.rules?.cooldownMin) || 30) * 60 * 1000;
   const now = Date.now();
 
   // 0. 🚀 部署上线 / 服务启动首次自选标的最新行情快照推送
-  if (!gHasSentBootReport) {
+  if (!gHasSentBootReport && !isManual) {
     try {
       const bootReport = await generateWatchlistSnapshotReport(freshData, watchlist, true);
       if (bootReport.count > 0) {
@@ -735,13 +735,16 @@ export async function processScheduledAlerts(env, freshData) {
   }
 
   // 1. 📢 7×24h 官方新公告差分监听 (仅真实官方公告)
-  if (freshData.announcements) {
+  if (freshData.announcements && !isManual) {
     await detectNewAnnouncementsAndNotify(env, botConfig, freshData.announcements);
   }
 
-  // 2. 🎯 100% 专属自选盯盘：仅针对用户收藏的自选标的进行量化买卖与暴涨暴跌预警
+  // 2. 🎯 100% 专属自选盯盘：针对用户收藏的自选标的进行量化买卖与暴涨暴跌预警
+  const pushedSignals = [];
   if (Array.isArray(watchlist) && watchlist.length > 0) {
-    const signals = inspectWatchlistSignals(freshData, watchlist, botConfig, gAlertHistory);
+    const historyMap = isManual ? {} : gAlertHistory;
+    const signals = inspectWatchlistSignals(freshData, watchlist, botConfig, historyMap);
+
     for (const sig of signals) {
       const isUp = sig.chg24h >= 0;
       const title = `${sig.type} ${sig.symbol} (${sig.zhName || ''}) ${isUp ? '+' : ''}${sig.chg24h.toFixed(2)}%`;
@@ -765,6 +768,9 @@ export async function processScheduledAlerts(env, freshData) {
         `- **触发时间**：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
 
       await sendUnifiedBroadcast(botConfig, title, textHtml, textMd);
+      pushedSignals.push(sig);
     }
   }
+
+  return pushedSignals;
 }

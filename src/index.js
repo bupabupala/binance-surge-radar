@@ -228,11 +228,16 @@ export default {
         if (authRole !== 'admin') return jsonResponse({ code: 403, message: '仅管理员可手动触发同步' }, 403);
         const startTime = Date.now();
         const data = await aggregateAllData(env);
-        await processScheduledAlerts(env, data);
+        const signals = await processScheduledAlerts(env, data, true);
+        const msg = signals.length > 0
+          ? `捕获 ${signals.length} 支自选标的异动信号并已推送到群 (${signals.map(s => `${s.symbol} ${s.chg24h >= 0 ? '+' : ''}${s.chg24h.toFixed(1)}%`).join(', ')})`
+          : '自选标的量化巡检完成，当前所有自选标的波动平稳（暂未触及 3% 异动阈值）';
         return jsonResponse({
           success: true,
           durationMs: Date.now() - startTime,
-          message: 'Data synced successfully',
+          message: msg,
+          signalCount: signals.length,
+          signals: signals.map(s => `${s.symbol} (${s.chg24h >= 0 ? '+' : ''}${s.chg24h.toFixed(2)}%)`),
           counts: data.counts,
           timestamp: data.timestamp
         });
