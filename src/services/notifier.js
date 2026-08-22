@@ -163,7 +163,7 @@ ${summaryText}
  * 消息推送通知与预警中心 (Telegram / 钉钉 / 新币上架 / 下架停牌 / 量化信号)
  */
 
-import { KV_KEYS } from '../config/constants.js';
+import { KV_KEYS, COMMON_HEADERS } from '../config/constants.js';
 import { getKVBinding } from '../utils/response.js';
 import { getWatchlist, inspectWatchlistSignals } from './quant.js';
 import { getChineseDisplayName } from '../config/dict.js';
@@ -477,7 +477,12 @@ async function fetchTokenTicker(symbol) {
   ];
   for (const url of urls) {
     try {
-      const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': COMMON_HEADERS['User-Agent'],
+          'Accept': 'application/json'
+        }
+      });
       if (res.ok) {
         const d = await res.json();
         if (d && d.symbol) {
@@ -505,7 +510,12 @@ async function fetchPulseStocks() {
   for (const url of urls) {
     try {
       const res = await fetch(url, {
-        headers: { 'Accept': 'application/json', 'clienttype': 'web', 'lang': 'zh-CN' }
+        headers: {
+          'User-Agent': COMMON_HEADERS['User-Agent'],
+          'Accept': 'application/json',
+          'clienttype': 'web',
+          'lang': 'zh-CN'
+        }
       });
       if (res.ok) {
         const json = await res.json();
