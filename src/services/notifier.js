@@ -736,103 +736,12 @@ export async function processScheduledAlerts(env, freshData) {
     } catch (e) {}
   }
 
-  // 1. 📢 7×24h 币安官方 4 大分类新公告差分监听与全要素推送 (含标题、正文核心摘要、原文直达)
+  // 1. 📢 7×24h 官方新公告差分监听 (仅真实官方公告)
   if (freshData.announcements) {
     await detectNewAnnouncementsAndNotify(env, botConfig, freshData.announcements);
   }
 
-  // 2. 检测新币上线与下架
-  await detectSymbolChangesAndNotify(env, botConfig, currentSymbols, preTradingSymbols);
-
-  // 3. 🚀 全市场突发重大暴涨暴跌异动捕捉 (现货 / Alpha / 美股全域扫描)
-  if (botConfig?.rules?.pct5 !== false) {
-    const allMarketAssets = [
-      ...(freshData.spot || []).map(x => ({ ...x, sector: '现货全量' })),
-      ...(freshData.alpha || []).map(x => ({ ...x, sector: 'Alpha Web3' })),
-      ...(freshData.stocks || []).map(x => ({ ...x, sector: 'bStocks 美股' }))
-    ];
-
-    const extremeMovers = allMarketAssets.filter(item => {
-      const chg = Number(item.priceChangePercent) || 0;
-      const vol = Number(item.volume24h) || 0;
-      const price = Number(item.price) || 0;
-      return price > 0 && vol >= 30000 && Math.abs(chg) >= 10.0;
-    });
-
-    const topGainers = extremeMovers
-      .filter(x => x.priceChangePercent >= 10.0)
-      .sort((a, b) => b.priceChangePercent - a.priceChangePercent);
-
-    const topLosers = extremeMovers
-      .filter(x => x.priceChangePercent <= -10.0)
-      .sort((a, b) => a.priceChangePercent - b.priceChangePercent);
-
-    // 每次巡检至多推送前 2 个未在冷却期内的暴涨标的
-    let pushedGainers = 0;
-    for (const item of topGainers) {
-      if (pushedGainers >= 2) break;
-      const clean = item.ticker || item.symbol.replace(/USDT$/, '');
-      const alertKey = `market_gainer_${clean}`;
-      if (gAlertHistory[alertKey] && (now - gAlertHistory[alertKey] < cooldownMs)) {
-        continue;
-      }
-      gAlertHistory[alertKey] = now;
-      pushedGainers++;
-
-      const title = `🚀【全网突发暴涨拉升】${clean} 狂飙 +${item.priceChangePercent.toFixed(2)}%!`;
-      const textHtml = `<b>🚀【全网突发暴涨拉升】</b>\n\n` +
-        `• 异动资产：<b>${clean}</b> (${item.zhName || item.name || ''})\n` +
-        `• 所属板块：<b>${item.sector || '全网行情'}</b>\n` +
-        `• 最新价格：$${Number(item.price).toLocaleString('en-US')}\n` +
-        `• <b>24h 涨幅：+${item.priceChangePercent.toFixed(2)}%</b>\n` +
-        `• 24h 成交额：$${(item.volume24h >= 1e6 ? (item.volume24h / 1e6).toFixed(2) + 'M' : (item.volume24h / 1e3).toFixed(2) + 'K')}\n` +
-        `• 触发时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
-
-      const textMd = `### 🚀【全网突发暴涨拉升】\n\n` +
-        `- **异动资产**：**${clean}** (${item.zhName || item.name || ''})\n` +
-        `- **所属板块**：\`${item.sector || '全网行情'}\`\n` +
-        `- **最新价格**：$${Number(item.price).toLocaleString('en-US')}\n` +
-        `- **24h 涨幅**：**+${item.priceChangePercent.toFixed(2)}%**\n` +
-        `- **24h 成交额**：$${(item.volume24h >= 1e6 ? (item.volume24h / 1e6).toFixed(2) + 'M' : (item.volume24h / 1e3).toFixed(2) + 'K')}\n` +
-        `- **触发时间**：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
-
-      await sendUnifiedBroadcast(botConfig, title, textHtml, textMd);
-    }
-
-    // 每次巡检至多推送前 2 个未在冷却期内的暴跌标的
-    let pushedLosers = 0;
-    for (const item of topLosers) {
-      if (pushedLosers >= 2) break;
-      const clean = item.ticker || item.symbol.replace(/USDT$/, '');
-      const alertKey = `market_loser_${clean}`;
-      if (gAlertHistory[alertKey] && (now - gAlertHistory[alertKey] < cooldownMs)) {
-        continue;
-      }
-      gAlertHistory[alertKey] = now;
-      pushedLosers++;
-
-      const title = `⚠️【全网突发跳水暴跌】${clean} 剧震 ${item.priceChangePercent.toFixed(2)}%!`;
-      const textHtml = `<b>⚠️【全网突发跳水暴跌】</b>\n\n` +
-        `• 异动资产：<b>${clean}</b> (${item.zhName || item.name || ''})\n` +
-        `• 所属板块：<b>${item.sector || '全网行情'}</b>\n` +
-        `• 最新价格：$${Number(item.price).toLocaleString('en-US')}\n` +
-        `• <b>24h 跌幅：${item.priceChangePercent.toFixed(2)}%</b>\n` +
-        `• 24h 成交额：$${(item.volume24h >= 1e6 ? (item.volume24h / 1e6).toFixed(2) + 'M' : (item.volume24h / 1e3).toFixed(2) + 'K')}\n` +
-        `• 触发时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
-
-      const textMd = `### ⚠️【全网突发跳水暴跌】\n\n` +
-        `- **异动资产**：**${clean}** (${item.zhName || item.name || ''})\n` +
-        `- **所属板块**：\`${item.sector || '全网行情'}\`\n` +
-        `- **最新价格**：$${Number(item.price).toLocaleString('en-US')}\n` +
-        `- **24h 跌幅**：**${item.priceChangePercent.toFixed(2)}%**\n` +
-        `- **24h 成交额**：$${(item.volume24h >= 1e6 ? (item.volume24h / 1e6).toFixed(2) + 'M' : (item.volume24h / 1e3).toFixed(2) + 'K')}\n` +
-        `- **触发时间**：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
-
-      await sendUnifiedBroadcast(botConfig, title, textHtml, textMd);
-    }
-  }
-
-  // 4. 🎯 自选标的专属量化盯盘 (5% 暴涨暴跌 / EMA 均线金叉死叉 / 连续 3 星放量建仓)
+  // 2. 🎯 100% 专属自选盯盘：仅针对用户收藏的自选标的进行量化买卖与暴涨暴跌预警
   if (Array.isArray(watchlist) && watchlist.length > 0) {
     const signals = inspectWatchlistSignals(freshData, watchlist, botConfig, gAlertHistory);
     for (const sig of signals) {
@@ -856,36 +765,6 @@ export async function processScheduledAlerts(env, freshData) {
         `- **15m 波动**：${sig.chg15m >= 0 ? '+' : ''}${sig.chg15m.toFixed(2)}%\n` +
         `- **放量星级**：${'⭐'.repeat(Math.max(1, sig.stars || 1))} (${sig.surgeMul}x)\n` +
         `- **触发时间**：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
-
-      await sendUnifiedBroadcast(botConfig, title, textHtml, textMd);
-    }
-  }
-
-  // 5. 检测全网小市值放量异动 (< $100M 市值)
-  const surge15m = (freshData.surge && freshData.surge['15m']) || [];
-  for (const item of surge15m.slice(0, 3)) {
-    if (item.stars >= (botConfig.surgeAlert?.minStars || 3) && item.surgeMultiplier >= (botConfig.surgeAlert?.minSurgeMultiplier || 3.0)) {
-      const clean = item.ticker || item.symbol.replace(/USDT$/, '');
-      const alertKey = `surge_${clean}_${item.stars}`;
-      if (gAlertHistory[alertKey] && (now - gAlertHistory[alertKey] < cooldownMs)) {
-        continue;
-      }
-      gAlertHistory[alertKey] = now;
-
-      const title = `🔥【小市值放量异动】${clean} 放量 ${item.surgeMultiplier}x (${item.starDisplay})`;
-      const textHtml = `<b>🔥【小市值放量异动雷达】</b>\n\n` +
-        `• 资产：<b>${clean}</b> (${item.zhName || ''})\n` +
-        `• 放量星级：<b>${item.starDisplay} (${item.surgeMultiplier}x)</b>\n` +
-        `• 最新价格：$${item.price} (${item.priceChange >= 0 ? '+' : ''}${item.priceChange}%)\n` +
-        `• 市值：$${(item.marketCap / 1e6).toFixed(2)}M (&lt; $100M)\n` +
-        `• 时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
-
-      const textMd = `### 🔥【小市值放量异动雷达】\n\n` +
-        `- **资产**：**${clean}** (${item.zhName || ''})\n` +
-        `- **放量星级**：**${item.starDisplay} (${item.surgeMultiplier}x)**\n` +
-        `- **最新价格**：$${item.price} (${item.priceChange >= 0 ? '+' : ''}${item.priceChange}%)\n` +
-        `- **市值**：$${(item.marketCap / 1e6).toFixed(2)}M (< $100M)\n` +
-        `- **时间**：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
 
       await sendUnifiedBroadcast(botConfig, title, textHtml, textMd);
     }

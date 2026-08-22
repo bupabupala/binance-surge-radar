@@ -106,8 +106,8 @@ export function inspectWatchlistSignals(dashboardData, watchlist, botConfig, ale
     const stars = token.stars || 1;
     const surgeMul = token.surgeMultiplier || 1.0;
 
-    // 1. 异动检测 (24h >= 5% 或 15m >= 3%)
-    if (botConfig?.rules?.pct5 !== false && (Math.abs(chg24h) >= 5.0 || Math.abs(chg15m) >= 3.0)) {
+    // 1. 异动检测 (24h >= 3% 或 15m >= 1.5%)
+    if (botConfig?.rules?.pct5 !== false && (Math.abs(chg24h) >= 3.0 || Math.abs(chg15m) >= 1.5)) {
       const alertKey = `${displaySym}_pct_${chg24h >= 0 ? 'up' : 'down'}`;
       if (!alertHistory[alertKey] || (now - alertHistory[alertKey] > cooldownMs)) {
         alertHistory[alertKey] = now;
