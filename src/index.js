@@ -194,7 +194,7 @@ export default {
           if (request.method === 'POST') {
             const botConfig = await getBotConfig(env);
             const watchlist = await getWatchlist(env);
-            const report = await generateWatchlistSnapshotReport(null, watchlist, false);
+            const report = await generateWatchlistSnapshotReport(null, watchlist, false, env);
             if (report.count > 0) {
               const sendResults = await sendUnifiedBroadcast(botConfig, report.title, report.textHtml, report.textMd);
               return jsonResponse({
@@ -206,10 +206,7 @@ export default {
             } else {
               return jsonResponse({
                 success: false,
-                message: '未能拉取到自选标的行情，推送已取消',
-                debugLogs: report.debugLogs || [],
-                watchlist,
-                spotDictKeys: Object.keys(report.spotDict || {})
+                message: '未能拉取到自选标的行情，推送已取消'
               }, 400);
             }
           }

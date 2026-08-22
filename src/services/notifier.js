@@ -167,6 +167,7 @@ import { KV_KEYS, COMMON_HEADERS } from '../config/constants.js';
 import { getKVBinding } from '../utils/response.js';
 import { getWatchlist, inspectWatchlistSignals } from './quant.js';
 import { getChineseDisplayName } from '../config/dict.js';
+import { fetchSpotTickers, fetchStockTokens } from './binance.js';
 
 let gInMemoryBotConfig = null;
 
@@ -538,78 +539,32 @@ async function fetchPulseStocks() {
   return dict;
 }
 
-export async function generateWatchlistSnapshotReport(freshData, watchlist = [], isBoot = false) {
-  const targetList = Array.isArray(watchlist) && watchlist.length > 0
-    ? watchlist
-    : ['SPCXB', 'SNDKB', 'TAO', 'AVAX', 'MAV', 'AIGENSYN', 'ASTER', 'TRUMP', 'GOOGLB', 'TSLAB', 'SKHYB'];
+export async function generateWatchlistSnapshotReport(freshData, watchlist = [], isBoot = false, env = null) {
+  let spot = freshData?.spot;
+  let stocks = freshData?.stocks;
+
+  if (!Array.isArray(spot) || spot.length === 0) {
+    spot = await fetchSpotTickers();
+  }
+  if (!Array.isArray(stocks) || stocks.length === 0) {
+    stocks = await fetchStockTokens(env);
+  }
 
   const spotDict = {};
-  (freshData?.spot || []).forEach(item => {
+  (spot || []).forEach(item => {
     if (item.symbol) spotDict[item.symbol.toUpperCase()] = item;
     if (item.ticker) spotDict[item.ticker.toUpperCase()] = item;
   });
 
-  // 🚀 1. 批量单次请求拉取所有自选标的 (严格 RFC-3986 编码 + 多镜像容灾)
-  const symArray = targetList.map(s => String(s).trim().toUpperCase().replace(/[\/\-_]/g, '').replace(/USDT$/i, '') + 'USDT');
-  const encodedParam = encodeURIComponent(JSON.stringify(symArray));
+  const stocksDict = {};
+  (stocks || []).forEach(item => {
+    if (item.symbol) stocksDict[item.symbol.toUpperCase()] = item;
+    if (item.ticker) stocksDict[item.ticker.toUpperCase()] = item;
+  });
 
-  const batchMirrors = [
-    `https://data-api.binance.vision/api/v3/ticker/24hr?symbols=${encodedParam}`,
-    `https://api.binance.com/api/v3/ticker/24hr?symbols=${encodedParam}`,
-    `https://api1.binance.com/api/v3/ticker/24hr?symbols=${encodedParam}`,
-    `https://api2.binance.com/api/v3/ticker/24hr?symbols=${encodedParam}`
-  ];
-
-  const debugLogs = [];
-
-  for (const url of batchMirrors) {
-    try {
-      const res = await fetch(url, {
-        headers: {
-          'User-Agent': COMMON_HEADERS['User-Agent'],
-          'Accept': 'application/json'
-        }
-      });
-      debugLogs.push({ url: url.slice(0, 45), status: res.status });
-      if (res.ok) {
-        const list = await res.json();
-        debugLogs.push({ listLength: Array.isArray(list) ? list.length : 'not_array' });
-        if (Array.isArray(list) && list.length > 0) {
-          list.forEach(d => {
-            const sym = (d.symbol || '').replace(/USDT$/i, '');
-            spotDict[sym.toUpperCase()] = {
-              symbol: d.symbol,
-              ticker: sym,
-              price: parseFloat(d.lastPrice) || 0,
-              priceChangePercent: parseFloat(d.priceChangePercent) || 0
-            };
-            spotDict[d.symbol.toUpperCase()] = spotDict[sym.toUpperCase()];
-          });
-          break;
-        }
-      }
-    } catch (e) {
-      debugLogs.push({ url: url.slice(0, 45), error: e.message });
-    }
-  }
-
-  // 🚀 2. 对未命中的个别标的进行单点兜底重试
-  const fallbackTasks = targetList
-    .filter(sym => {
-      const clean = String(sym).trim().toUpperCase().replace(/[\/\-_]/g, '').replace(/USDT$/i, '');
-      return !spotDict[clean] || !(spotDict[clean].price > 0);
-    })
-    .map(async sym => {
-      const res = await fetchTokenTicker(sym);
-      if (res && res.ticker) {
-        spotDict[res.ticker.toUpperCase()] = res;
-        spotDict[res.symbol.toUpperCase()] = res;
-      }
-    });
-
-  if (fallbackTasks.length > 0) {
-    await Promise.allSettled(fallbackTasks);
-  }
+  const targetList = Array.isArray(watchlist) && watchlist.length > 0
+    ? watchlist
+    : ['SPCXB', 'SNDKB', 'TAO', 'AVAX', 'MAV', 'AIGENSYN', 'ASTER', 'TRUMP', 'GOOGLB', 'TSLAB', 'SKHYB'];
 
   const htmlRows = [];
   const mdRows = [];
@@ -619,7 +574,12 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     const upper = rawTarget.toUpperCase().replace(/[\/\-_]/g, '');
     const cleanSym = upper.replace(/USDT$/i, '');
 
-    const token = spotDict[cleanSym] || spotDict[upper] || spotDict[upper + 'USDT'];
+    let token = null;
+    if (upper === 'SPACEX' || upper === 'SPACEXB' || upper === 'SPCX') {
+      token = stocksDict['SPCXB'] || stocksDict['SPCX'];
+    } else {
+      token = stocksDict[upper] || spotDict[cleanSym] || spotDict[upper] || spotDict[upper + 'USDT'];
+    }
 
     if (token && Number(token.price) > 0) {
       const chg = Number(token.priceChangePercent) || 0;
@@ -635,7 +595,7 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
 
   // 🛡️ 铁律：只要有效条数为 0，直接返回 count: 0，绝不组装空消息！
   if (htmlRows.length === 0) {
-    return { count: 0, title: '', textHtml: '', textMd: '', debugLogs, spotDict };
+    return { count: 0, title: '', textHtml: '', textMd: '' };
   }
 
   const title = isBoot ? '🚀 币安 USDT 异动雷达 · 部署上线成功' : '📊 币安 USDT 异动雷达 · 自选资产实时行情';
@@ -654,7 +614,7 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     `- **监控状态**：全天候 7×24h 极速微巡检已就绪 (~12秒/轮)\n` +
     `- **报告时间**：${nowStr}`;
 
-  return { title, textHtml, textMd, count: htmlRows.length, debugLogs, spotDict };
+  return { title, textHtml, textMd, count: htmlRows.length };
 }
 
 export async function sendTestNotification(botConfig, env = null, freshData = null) {
