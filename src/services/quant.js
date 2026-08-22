@@ -9,15 +9,20 @@ import { getChineseDisplayName } from '../config/dict.js';
 let gCachedWatchlist = null;
 
 export async function getWatchlist(env) {
-  if (gCachedWatchlist) {
+  if (gCachedWatchlist && gCachedWatchlist.length > 0) {
     return gCachedWatchlist;
   }
   const kv = getKVBinding(env);
-  let list = ['BTC', 'ETH', 'SOL', 'SPACEXb', 'SNDKB', 'NVDAB'];
+  let list = ['BTC', 'ETH', 'SOL', 'SPCXB', 'SNDKB', 'NVDAB'];
   if (kv) {
     try {
       const raw = await kv.get(KV_KEYS.WATCHLIST);
-      if (raw) list = JSON.parse(raw);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          list = parsed;
+        }
+      }
     } catch (e) {}
   }
   gCachedWatchlist = list;
