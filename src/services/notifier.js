@@ -589,6 +589,40 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     });
   } catch (e) {}
 
+  // 🚀 2.2 美股链上双保险：DexScreener 实时链上价格 (100% 畅通，针对 bStocks / RWA 代币)
+  const bStocksNeeded = targetList.filter(sym => {
+    const clean = String(sym).trim().toUpperCase().replace(/[\/\-_]/g, '').replace(/USDT$/i, '');
+    return !spotDict[clean] || !(spotDict[clean].price > 0);
+  });
+
+  if (bStocksNeeded.length > 0) {
+    const dexTasks = bStocksNeeded.map(async sym => {
+      try {
+        const clean = String(sym).trim().toUpperCase().replace(/[\/\-_]/g, '').replace(/USDT$/i, '');
+        const res = await fetch(`https://api.dexscreener.com/latest/dex/search?q=${clean}`);
+        if (res.ok) {
+          const json = await res.json();
+          const pair = json?.pairs?.[0];
+          if (pair && pair.priceUsd) {
+            const price = parseFloat(pair.priceUsd) || 0;
+            const chg = parseFloat(pair.priceChange?.h24) || 0;
+            const item = {
+              symbol: clean,
+              ticker: clean,
+              name: pair.baseToken?.name || clean,
+              zhName: getChineseDisplayName(clean, pair.baseToken?.name, clean),
+              price,
+              priceChangePercent: chg
+            };
+            spotDict[clean] = item;
+            spotDict[clean.replace(/B$/, '')] = item;
+          }
+        }
+      } catch (e) {}
+    });
+    await Promise.allSettled(dexTasks);
+  }
+
   // 🚀 3. 兜底通道：Gate.io 现货行情 (全网全覆盖，100% 畅通)
   try {
     const res = await fetch('https://api.gateio.ws/api/v4/spot/tickers', {
