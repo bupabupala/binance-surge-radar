@@ -574,26 +574,19 @@ export async function generateWatchlistSnapshotReport(freshData, watchlist = [],
     }
   } catch (e) {}
 
-  // 🚀 2. 美股专属通道：Binance Pulse Web3 bStocks API
+  // 🚀 2. 美股专属通道：Binance Pulse Web3 bStocks (完整双页缓存与解析)
   try {
-    const res = await fetch('https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/pulse/unified/rank/list/ai?chainIds=56,CT_501,8453,1&rankType=40&page=1&size=100', {
-      headers: { 'User-Agent': COMMON_HEADERS['User-Agent'], 'Accept': 'application/json' }
+    const stocks = await fetchStockTokens(env);
+    (stocks || []).forEach(s => {
+      const sym = (s.symbol || '').toUpperCase();
+      const raw = (s.rawSymbol || s.ticker || '').toUpperCase();
+      spotDict[sym] = s;
+      spotDict[raw] = s;
+      if (sym === 'SPCXB' || sym === 'SPCX' || raw === 'SPCX') {
+        spotDict['SPACEX'] = s;
+        spotDict['SPACEXB'] = s;
+      }
     });
-    if (res.ok) {
-      const json = await res.json();
-      const tokens = json?.data?.tokens || [];
-      tokens.forEach(t => {
-        const sym = (t.symbol || '').toUpperCase();
-        spotDict[sym] = {
-          symbol: sym,
-          ticker: sym,
-          name: t.stockCompanyName || sym,
-          zhName: t.stockCompanyNameZh || t.name || sym,
-          price: parseFloat(t.price) || 0,
-          priceChangePercent: parseFloat(t.percentChange24h) || 0
-        };
-      });
-    }
   } catch (e) {}
 
   // 🚀 3. 兜底通道：Gate.io 现货行情 (全网全覆盖，100% 畅通)
