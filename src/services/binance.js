@@ -87,18 +87,25 @@ let gCachedAlpha = { data: [], timestamp: 0 };
 let gCachedStocks = { data: [], timestamp: 0 };
 let gCachedDashboard = { data: null, timestamp: 0 };
 
-// 🎯 1. 纯正 Web3 链上原生代币 (rankType = 20)
+// 🎯 1. 纯正 Web3 链上原生代币 (rankType = 10 / 20 / 50 全网热门与 Alpha 并行聚合 · 含哈基米)
 export async function fetchAlphaTokens(env = null) {
   if (Date.now() - gCachedAlpha.timestamp < 60000 && gCachedAlpha.data.length > 0) {
     return gCachedAlpha.data;
   }
 
-  const pages = [1, 2];
-  const pagePromises = pages.map(async page => {
+  const queries = [
+    { rankType: 10, page: 1 },
+    { rankType: 10, page: 2 },
+    { rankType: 20, page: 1 },
+    { rankType: 20, page: 2 },
+    { rankType: 50, page: 1 }
+  ];
+
+  const pagePromises = queries.map(async q => {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 4000);
-      const url = `https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/pulse/unified/rank/list/ai?chainIds=56,CT_501,8453,1&rankType=20&page=${page}&size=250`;
+      const url = `https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/market/token/pulse/unified/rank/list/ai?chainIds=56,CT_501,8453,1&rankType=${q.rankType}&page=${q.page}&size=250`;
       const res = await fetch(url, {
         headers: {
           'User-Agent': COMMON_HEADERS['User-Agent'],
@@ -117,7 +124,7 @@ export async function fetchAlphaTokens(env = null) {
 
   const results = await Promise.all(pagePromises);
   const allTokens = results.flat();
-  if (allTokens.length === 0) return [];
+  if (allTokens.length === 0) return gCachedAlpha.data || [];
 
   const seen = new Set();
   const list = [];
@@ -131,7 +138,7 @@ export async function fetchAlphaTokens(env = null) {
 
   for (const token of allTokens) {
     const sym = token.symbol || token.baseAsset || token.name || 'UNKNOWN';
-    const ticker = (token.ticker || sym).toUpperCase();
+    const ticker = token.ticker || sym;
     const tag = token.tokenTag || {};
     
     // 🛡️ 严格过滤所有美股代币，保证 Alpha 100% 纯正 Web3 链上代币
@@ -149,7 +156,7 @@ export async function fetchAlphaTokens(env = null) {
       continue;
     }
 
-    const key = `${sym}_${token.chainId || 'web3'}`;
+    const key = `${sym}_${token.chainId || 'web3'}_${token.contractAddress || ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
 
@@ -161,9 +168,9 @@ export async function fetchAlphaTokens(env = null) {
     list.push({
       symbol: sym,
       rawSymbol: token.symbol || sym,
-      ticker: token.ticker || sym,
-      name: token.name || sym,
-      zhName: getChineseDisplayName(sym, token.name, token.ticker),
+      ticker: ticker,
+      name: token.name || token.stockCompanyName || sym,
+      zhName: getChineseDisplayName(sym, token.name, ticker) || (sym.includes('哈基米') ? '哈基米 (BSC)' : sym),
       chainId: token.chainId,
       chainName: token.chainName || CHAIN_MAP[String(token.chainId)] || 'Web3',
       contractAddress: token.contractAddress,

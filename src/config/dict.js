@@ -110,17 +110,27 @@ export const CHINESE_NAME_MAP = {
   '1000SATS': 'Sats 聪铭文',
   '1000RATS': 'Rats 老鼠铭文',
   '1000CAT': 'Cat 模因币',
-  '1000CHEEMS': 'Cheems 柴犬模因'
+  '1000CHEEMS': 'Cheems 柴犬模因',
+  '哈基米': '哈基米 (BSC 热门龙头)',
+  'HAJIMI': '哈基米 (BSC 热门龙头)',
+  'HAKIMI': '哈基米 (BSC 热门龙头)',
+  'HACHIMI': '哈基米 (BSC 热门龙头)',
+  'AIGENSYN': 'AIGENSYN AI合成',
+  'ASTER': 'ASTER 去中心化期权',
+  'TRUMP': 'TRUMP 特朗普模因'
 };
 
 export function getChineseDisplayName(sym, rawName, ticker) {
   if (!sym) return rawName || '';
-  const clean = String(sym).toUpperCase().replace(/(USDT|\/USDT)$/i, '').replace(/[^A-Z0-9]/g, '');
+  const rawStr = String(sym).trim();
+  if (CHINESE_NAME_MAP[rawStr]) return CHINESE_NAME_MAP[rawStr];
+
+  const clean = rawStr.toUpperCase().replace(/(USDT|\/USDT)$/i, '').trim();
   if (CHINESE_NAME_MAP[clean]) return CHINESE_NAME_MAP[clean];
   
   if (clean.endsWith('B') && CHINESE_NAME_MAP[clean.slice(0, -1)]) {
     return CHINESE_NAME_MAP[clean.slice(0, -1)] + ' (bStocks)';
   }
   
-  return rawName || ticker || clean;
+  return rawName || ticker || clean || rawStr;
 }
